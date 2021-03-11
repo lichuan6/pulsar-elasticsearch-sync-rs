@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pulsar-elasticsearch-sync-rs
+  labels:
+    app: pulsar-elasticsearch-sync-rs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pulsar-elasticsearch-sync-rs
+  template:
+    metadata:
+      labels:
+        app: pulsar-elasticsearch-sync-rs
+    spec:
+      containers:
+      - name: pulsar-elasticsearch-sync-rs
+        image: lichuan33/pulsar-elasticsearch-sync-rs
+        imagePullPolicy: Always
+        args: ["--batch-size", "1000", "--buffer-size", "1000"]
+        env:
+          - name: RUST_LOG
+            value: "info"
+          - name: ELASTICSEARCH_ADDRESS
+            value: "<es address>, ie. http://localhost:9200 or aws mamanged elaticsearch servcie endpoint"
+          - name: PULSAR_ADDRESS
+            value: "<pulsar address>, ie. pulsar://localhost:6650"
+          - name: PULSAR_TOKEN
+            value: "<use your own pulsar token who has the permission to consume messages from namespace below>"
+          - name: PULSAR_NAMESPACE
+            value: "<pulsar namespace>,format: tenant/namespace, i.e public/fluentbit-logging"
+        resources:
+          limits:
+            cpu: 200m
+            memory: 200Mi
+          requests:
+            cpu: 200m
+            memory: 100Mi
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - operator: "Exists"
+          effect: "NoExecute"
+        - operator: "Exists"
+          effect: "NoSchedule"
