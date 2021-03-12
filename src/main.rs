@@ -5,7 +5,6 @@ use pulsar::{
     TokioExecutor,
 };
 use regex::Regex;
-use serde;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env, string::FromUtf8Error, time::Instant};
 use structopt::StructOpt;
@@ -95,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        if data.len() == 0 {
+        if data.is_empty() {
             continue;
         }
 
@@ -145,7 +144,7 @@ fn es_timestamp_and_date(publish_time: u64) -> (String, String) {
 // The input topic has the format of: `persistent://public/default/test`.
 // Here we try to parse the last part of input string, ie. `test`
 fn extract_topic_part(topic: &str) -> &str {
-    let v: Vec<_> = topic.split("/").collect();
+    let v: Vec<_> = topic.split('/').collect();
     assert!(v.len() == 5);
     v[4]
 }
