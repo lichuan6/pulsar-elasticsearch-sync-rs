@@ -1,9 +1,3 @@
-// NOTE: 从 elaticsearch/examples/index_questions_answers/main.rs copy 过来做了一些修改
-// use serde::{Deserialize, Serialize};
-// use serde_json::json;
-
-// use clap::{App, Arg};
-
 use std::time::Instant;
 
 use elasticsearch::{
@@ -63,7 +57,6 @@ pub async fn index_json_from_str(
 
         // TODO: retry failures
         log::info!("error : {:?}", json);
-        // println!("Errors whilst indexing. Failures: {}", failed.len());
         log::info!("Errors whilst indexing. Failures: {}", failed.len())
     }
 
@@ -117,14 +110,6 @@ pub async fn bulkwrite(
 }
 
 pub fn create_client(addr: &str) -> Result<Elasticsearch, Error> {
-    // fn cluster_addr() -> String {
-    //     match std::env::var("ELASTICSEARCH_URL") {
-    //         Ok(server) => server,
-    //         Err(_) => DEFAULT_ADDRESS.into(),
-    //     }
-    // }
-
-    // let url = Url::parse(cluster_addr().as_ref()).unwrap();
     let url = Url::parse(addr)?;
 
     let conn_pool = SingleNodeConnectionPool::new(url);

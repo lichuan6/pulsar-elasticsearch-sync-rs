@@ -16,7 +16,6 @@ impl DeserializeMessage for Data {
     type Output = Result<String, FromUtf8Error>;
 
     fn deserialize_message(payload: &Payload) -> Self::Output {
-        // serde_json::from_slice(&payload.data)
         String::from_utf8(payload.data.clone())
     }
 }
@@ -57,9 +56,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut consumer: Consumer<Data, _> = pulsar
         .consumer()
-        // NOTE:
-        // 默认采用 public/default namespace，所以这里 regex 写 r".*" 就可以匹配
-        // public/default 下所有 topics
         .with_lookup_namespace(pulsar_namespace)
         .with_topic_regex(Regex::new(&opt.topic_regex).unwrap())
         .with_consumer_name("consumer-pulsar-elasticsearch-sync-rs")
@@ -85,7 +81,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(msg) = consumer.try_next().await? {
         total += 1;
         consumer.ack(&msg).await?;
-        // log::info!("metadata: {:?}", msg.metadata());
         let data = match msg.deserialize() {
             Ok(data) => data,
             Err(e) => {
@@ -100,7 +95,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // build es index name based on pulsar messages topic and publish_time
         // es index name = `topic+publish_date`, i.e. test-2021.01.01
-
         let topic = extract_topic_part(&msg.topic);
         let (es_timestamp, date_str) = es_timestamp_and_date(msg.metadata().publish_time);
         let index = format!("{}-{}", topic, date_str);
