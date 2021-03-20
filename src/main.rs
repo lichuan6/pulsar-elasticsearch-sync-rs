@@ -61,8 +61,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_consumer_name("consumer-pulsar-elasticsearch-sync-rs")
         .with_subscription_type(SubType::Shared)
         .with_subscription("pulsar-elasticsearch-sync-rs")
-        // get latest messages(Some(0)), earliest is Some(1)
         .with_options(ConsumerOptions {
+            // get latest messages(Some(0)), earliest is Some(1)
             initial_position: Some(0),
             durable: Some(false),
             ..Default::default()
@@ -76,7 +76,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log::info!("pulsar elssticserach sync started, begin to consume messages...");
 
-    // TODO: use &str as key?
     let mut buffer_map = HashMap::<String, (Vec<String>, Instant)>::new();
     while let Some(msg) = consumer.try_next().await? {
         total += 1;
@@ -100,12 +99,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let index = format!("{}-{}", topic, date_str);
         log::trace!("index: {}, MSG: {}, Len: {}", index, &data, &data.len());
 
-        let buf = if let Some(buf) = buffer_map.get_mut(&index) {
-            buf
-        } else {
-            buffer_map.insert(index.clone(), (Vec::new(), Instant::now()));
-            buffer_map.get_mut(&index).unwrap()
-        };
+        let buf = buffer_map
+            .entry(index.clone())
+            .or_insert_with(|| (Vec::new(), Instant::now()));
         buf.0.push(data);
 
         if total % size == 0 {
