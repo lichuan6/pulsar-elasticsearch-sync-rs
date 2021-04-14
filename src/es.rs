@@ -8,15 +8,11 @@ use serde_json::Value;
 use url::Url;
 
 /// Reads messages from pulsar topic and indexes
-/// them into Elasticsearch using the bulk API. An index with explicit mapping is created
-/// for search in other examples.
-///
+/// them into Elasticsearch using the bulk API. An index with explicit mapping
+/// is created for search in other examples.
 // TODO: Concurrent bulk requests
 pub async fn index_json_from_str(
-    client: &Elasticsearch,
-    index: &str,
-    publish_time: &str,
-    data: &[&str],
+    client: &Elasticsearch, index: &str, publish_time: &str, data: &[&str],
 ) -> Result<(), Error> {
     let body: Vec<BulkOperation<_>> = data
         .iter()
@@ -39,11 +35,8 @@ pub async fn index_json_from_str(
         log::error!("{}", i);
     }
 
-    let response = client
-        .bulk(BulkParts::Index(index))
-        .body(body)
-        .send()
-        .await?;
+    let response =
+        client.bulk(BulkParts::Index(index)).body(body).send().await?;
 
     let json: Value = response.json().await?;
 
@@ -63,7 +56,9 @@ pub async fn index_json_from_str(
     Ok(())
 }
 
-fn transform(value: &serde_json::Value, publish_time: Option<&str>) -> serde_json::Value {
+fn transform(
+    value: &serde_json::Value, publish_time: Option<&str>,
+) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {
             let mut m = serde_json::Map::new();
@@ -81,9 +76,7 @@ fn transform(value: &serde_json::Value, publish_time: Option<&str>) -> serde_jso
 }
 
 pub async fn bulkwrite(
-    client: &Elasticsearch,
-    index: &str,
-    publish_time: &str,
+    client: &Elasticsearch, index: &str, publish_time: &str,
     buf: &mut (Vec<String>, Instant),
 ) {
     let now = Instant::now();

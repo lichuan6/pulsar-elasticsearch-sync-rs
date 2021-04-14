@@ -1,13 +1,15 @@
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use futures::TryStreamExt;
 use pulsar::{
-    Authentication, Consumer, ConsumerOptions, DeserializeMessage, Payload, Pulsar, SubType,
-    TokioExecutor,
+    Authentication, Consumer, ConsumerOptions, DeserializeMessage, Payload,
+    Pulsar, SubType, TokioExecutor,
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env, string::FromUtf8Error, time::Instant};
 use structopt::StructOpt;
+
+use pulsar_elasticsearch_sync_rs::prometheus::run_warp_server;
 
 #[derive(Serialize, Deserialize)]
 struct Data;
@@ -21,9 +23,15 @@ impl DeserializeMessage for Data {
 }
 use pulsar_elasticsearch_sync_rs::{args::Opt, es};
 
+fn run_metric_server() {
+    tokio::task::spawn(run_warp_server());
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
+
+    run_metric_server();
 
     let opt = Opt::from_args();
 
@@ -74,7 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let size = opt.buffer_size;
     let mut total = 0;
 
-    log::info!("pulsar elssticserach sync started, begin to consume messages...");
+    log::info!(
+        "pulsar elssticserach sync started, begin to consume messages..."
+    );
 
     let mut buffer_map = HashMap::<String, (Vec<String>, Instant)>::new();
     while let Some(msg) = consumer.try_next().await? {
@@ -95,7 +105,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // build es index name based on pulsar messages topic and publish_time
         // es index name = `topic+publish_date`, i.e. test-2021.01.01
         let topic = extract_topic_part(&msg.topic);
-        let (es_timestamp, date_str) = es_timestamp_and_date(msg.metadata().publish_time);
+        let (es_timestamp, date_str) =
+            es_timestamp_and_date(msg.metadata().publish_time);
         let index = format!("{}-{}", topic, date_str);
         log::trace!("index: {}, MSG: {}, Len: {}", index, &data, &data.len());
 
@@ -122,13 +133,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn es_timestamp_and_date(publish_time: u64) -> (String, String) {
     let publish_time = publish_time / 1000;
     let publish_time_nsec = publish_time % 1000;
-    let naive_datetime =
-        NaiveDateTime::from_timestamp(publish_time as i64, publish_time_nsec as u32);
-    let date_time: DateTime<Local> = Local.from_local_datetime(&naive_datetime).unwrap();
-    (
-        date_time.to_rfc3339(),
-        naive_datetime.format("%Y.%m.%d").to_string(),
-    )
+    let naive_datetime = NaiveDateTime::from_timestamp(
+        publish_time as i64,
+        publish_time_nsec as u32,
+    );
+    let date_time: DateTime<Local> =
+        Local.from_local_datetime(&naive_datetime).unwrap();
+    (date_time.to_rfc3339(), naive_datetime.format("%Y.%m.%d").to_string())
 }
 
 // The input topic has the format of: `persistent://public/default/test`.
