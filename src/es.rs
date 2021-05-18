@@ -41,16 +41,16 @@ pub async fn index_json_from_str(
     let json: Value = response.json().await?;
 
     if json["errors"].as_bool().unwrap_or(false) {
-        let failed: Vec<&Value> = json["items"]
+        let failed_count = json["items"]
             .as_array()
             .unwrap()
             .iter()
             .filter(|v| !v["error"].is_null())
-            .collect();
+            .count();
 
         // TODO: retry failures
         log::info!("error : {:?}", json);
-        log::info!("Errors whilst indexing. Failures: {}", failed.len())
+        log::info!("Errors whilst indexing. Failures: {}", failed_count)
     }
 
     Ok(())

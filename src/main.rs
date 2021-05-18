@@ -4,13 +4,16 @@ use pulsar::{
     Authentication, Consumer, ConsumerOptions, DeserializeMessage, Payload,
     Pulsar, SubType, TokioExecutor,
 };
+use pulsar_elasticsearch_sync_rs::prometheus::run_warp_server;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, string::FromUtf8Error, time::Instant};
+use std::{
+    collections::HashMap,
+    env,
+    string::FromUtf8Error,
+    time::{Duration, Instant},
+};
 use structopt::StructOpt;
-
-use pulsar_elasticsearch_sync_rs::prometheus::run_warp_server;
-
 #[derive(Serialize, Deserialize)]
 struct Data;
 
@@ -25,6 +28,29 @@ use pulsar_elasticsearch_sync_rs::{args::Opt, es};
 
 fn run_metric_server() {
     tokio::task::spawn(run_warp_server());
+}
+
+async fn create_consumer(
+    pulsar: &Pulsar<TokioExecutor>, name: &str, namespace: &str,
+    topic_regex: &str, subscription_name: &str, batch_size: u32,
+) -> Result<Consumer<Data, TokioExecutor>, pulsar::Error> {
+    Ok(pulsar
+        .consumer()
+        .with_lookup_namespace(namespace)
+        .with_topic_regex(Regex::new(topic_regex).unwrap())
+        //.with_consumer_name("consumer-pulsar-elasticsearch-sync-rs")
+        .with_consumer_name(name)
+        .with_subscription_type(SubType::Shared)
+        .with_subscription(subscription_name)
+        .with_options(ConsumerOptions {
+            // get latest messages(Some(0)), earliest is Some(1)
+            initial_position: Some(0),
+            durable: Some(false),
+            ..Default::default()
+        })
+        .with_batch_size(batch_size)
+        .build()
+        .await?)
 }
 
 #[tokio::main]
@@ -62,67 +88,112 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pulsar: Pulsar<_> = builder.build().await?;
 
-    let mut consumer: Consumer<Data, _> = pulsar
-        .consumer()
-        .with_lookup_namespace(pulsar_namespace)
-        .with_topic_regex(Regex::new(&opt.topic_regex).unwrap())
-        .with_consumer_name("consumer-pulsar-elasticsearch-sync-rs")
-        .with_subscription_type(SubType::Shared)
-        .with_subscription("pulsar-elasticsearch-sync-rs")
-        .with_options(ConsumerOptions {
-            // get latest messages(Some(0)), earliest is Some(1)
-            initial_position: Some(0),
-            durable: Some(false),
-            ..Default::default()
-        })
-        .with_batch_size(opt.batch_size)
-        .build()
-        .await?;
-
-    let size = opt.buffer_size;
-    let mut total = 0;
-
+    let consumer_name = "consumer-pulsar-elasticsearch-sync-rs";
+    let subscription_name = "pulsar-elasticsearch-sync-rs";
     log::info!(
         "pulsar elssticserach sync started, begin to consume messages..."
     );
 
-    let mut buffer_map = HashMap::<String, (Vec<String>, Instant)>::new();
-    while let Some(msg) = consumer.try_next().await? {
-        total += 1;
-        consumer.ack(&msg).await?;
-        let data = match msg.deserialize() {
-            Ok(data) => data,
-            Err(e) => {
-                log::error!("could not deserialize message: {:?}", e);
-                break;
+    consume_loop(
+        &pulsar,
+        &client,
+        consumer_name,
+        subscription_name,
+        &pulsar_namespace,
+        &opt.topic_regex,
+        opt.batch_size,
+        opt.buffer_size,
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn consume_loop(
+    pulsar: &Pulsar<TokioExecutor>, client: &elasticsearch::Elasticsearch,
+    name: &str, subscription_name: &str, namespace: &str, topic_regex: &str,
+    batch_size: u32, buffer_size: usize,
+) -> Result<(), pulsar::Error> {
+    let mut consumer: Consumer<Data, _> = create_consumer(
+        &pulsar,
+        name,
+        namespace,
+        topic_regex,
+        subscription_name,
+        batch_size,
+    )
+    .await?;
+
+    let mut total = 0;
+    let mut buffer_map = HashMap::new();
+
+    while let Ok(msg) = consumer.try_next().await {
+        if let Some(msg) = msg {
+            total += 1;
+            consumer.ack(&msg).await?;
+            let data = match msg.deserialize() {
+                Ok(data) => data,
+                Err(e) => {
+                    log::error!("could not deserialize message: {:?}", e);
+                    break;
+                }
+            };
+
+            if data.is_empty() {
+                continue;
             }
-        };
 
-        if data.is_empty() {
-            continue;
-        }
+            // build es index nameased on pulsar messages topic and
+            // publish_time es index name =
+            // `topic+publish_date`, i.e. test-2021.01.01
+            let topic = extract_topic_part(&msg.topic);
+            let (es_timestamp, date_str) =
+                es_timestamp_and_date(msg.metadata().publish_time);
+            let index = format!("{}-{}", topic, date_str);
+            log::trace!(
+                "index: {}, MSG: {}, Len: {}",
+                index,
+                &data,
+                &data.len()
+            );
 
-        // build es index name based on pulsar messages topic and publish_time
-        // es index name = `topic+publish_date`, i.e. test-2021.01.01
-        let topic = extract_topic_part(&msg.topic);
-        let (es_timestamp, date_str) =
-            es_timestamp_and_date(msg.metadata().publish_time);
-        let index = format!("{}-{}", topic, date_str);
-        log::trace!("index: {}, MSG: {}, Len: {}", index, &data, &data.len());
+            let buf = buffer_map
+                .entry(index.clone())
+                .or_insert_with(|| (Vec::new(), Instant::now()));
+            buf.0.push(data);
 
-        let buf = buffer_map
-            .entry(index.clone())
-            .or_insert_with(|| (Vec::new(), Instant::now()));
-        buf.0.push(data);
-
-        if total % size == 0 {
-            es::bulkwrite(&client, &index, &es_timestamp, buf).await;
-        } else {
-            // TODO:
-            // clean outdated buffer_map
-            let now = Instant::now();
-            if now.elapsed().as_secs() - buf.1.elapsed().as_secs() > 10 {
+            if total % buffer_size == 0 {
                 es::bulkwrite(&client, &index, &es_timestamp, buf).await;
+            } else {
+                // TODO:
+                // clean outdated buffer_map
+                let now = Instant::now();
+                if now.elapsed().as_secs() - buf.1.elapsed().as_secs() > 10 {
+                    es::bulkwrite(&client, &index, &es_timestamp, buf).await;
+                }
+            }
+        } else {
+            // NOTE: try_next return None if stream is closed, reconnect
+            println!("fail to connect to pulsar broker, sleep 10s ...");
+            tokio::time::sleep(Duration::from_secs(10)).await;
+
+            consumer = match create_consumer(
+                &pulsar,
+                name,
+                namespace,
+                topic_regex,
+                subscription_name,
+                batch_size,
+            )
+            .await
+            {
+                Ok(consumer) => consumer,
+                Err(e) => {
+                    // sleep and continue
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    println!("create consumer error : {:?}", e);
+                    continue;
+                }
             }
         }
     }
