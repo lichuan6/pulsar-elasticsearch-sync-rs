@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consumer_name = "consumer-pulsar-elasticsearch-sync-rs";
     let subscription_name = "pulsar-elasticsearch-sync-rs";
     log::info!(
-        "pulsar elssticserach sync started, begin to consume messages..."
+        "pulsar elasticserach sync started, begin to consume messages..."
     );
 
     consume_loop(
@@ -168,7 +168,7 @@ async fn consume_loop(
                 // TODO:
                 // clean outdated buffer_map
                 let now = Instant::now();
-                if now.elapsed().as_secs() - buf.1.elapsed().as_secs() > 10 {
+                if now.duration_since(buf.1).as_secs() > 10 {
                     es::bulkwrite(&client, &index, &es_timestamp, buf).await;
                 }
             }
