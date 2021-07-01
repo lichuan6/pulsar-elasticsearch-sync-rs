@@ -40,6 +40,10 @@ pub struct Opt {
     #[structopt(short = "s", long, default_value = "1000")]
     pub buffer_size: usize,
 
+    /// Flush interval for checking messages, default is 5000(5s)
+    #[structopt(short = "f", long, default_value = "5000")]
+    pub flush_interval: u32,
+
     /// Elasticsearch address
     #[structopt(short, long, default_value = "http://localhost:9200")]
     pub elasticsearch_addr: String,

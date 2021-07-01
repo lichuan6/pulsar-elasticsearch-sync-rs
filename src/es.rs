@@ -1,10 +1,10 @@
-use std::time::Instant;
-
 use elasticsearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
     BulkOperation, BulkParts, Elasticsearch, Error,
 };
 use serde_json::Value;
+use std::collections::HashMap;
+use std::time::Instant;
 use url::Url;
 
 /// Reads messages from pulsar topic and indexes
@@ -75,18 +75,65 @@ fn transform(
     }
 }
 
-pub async fn bulkwrite(
-    client: &Elasticsearch, index: &str, publish_time: &str,
-    buf: &mut (Vec<String>, Instant),
+pub async fn bulkwrite_and_clear(
+    client: &Elasticsearch,
+    buffer_map: &mut HashMap<String, Vec<(String, String)>>,
 ) {
-    let now = Instant::now();
-    let data: Vec<&str> = buf.0.iter().map(AsRef::as_ref).collect();
-    match index_json_from_str(&client, &index, publish_time, &data).await {
-        Ok(_) => {}
-        Err(e) => {
-            log::error!("Index json error : {:?}", e)
+    for (index, buf) in buffer_map.iter() {
+        let _ = bulkwrite(client, index, buf).await;
+    }
+    buffer_map.clear();
+}
+
+fn split_buffer(
+    buf: &[(String, String)],
+) -> (Vec<BulkOperation<serde_json::Value>>, Vec<&String>) {
+    let mut oks = Vec::new();
+    let mut errors = Vec::new();
+
+    for (publish_time, raw_log) in buf.iter() {
+        if let Ok(log) = serde_json::from_str(raw_log) {
+            let log = transform(&log, Some(publish_time));
+            oks.push(BulkOperation::index(log).into());
+        } else {
+            errors.push(raw_log);
         }
     }
+    (oks, errors)
+}
+
+pub async fn bulkwrite(
+    client: &Elasticsearch, index: &str, buf: &[(String, String)],
+) -> Result<(), Error> {
+    let now = Instant::now();
+    // add publish_time as `@timestamp` to raw log by calling transform
+    let (body, errors) = split_buffer(buf);
+
+    let ok_len = body.len();
+    log::debug!("serde OK : {}", ok_len);
+
+    for i in errors {
+        log::error!("{}", i);
+    }
+
+    let response =
+        client.bulk(BulkParts::Index(index)).body(body).send().await?;
+
+    let json: Value = response.json().await?;
+
+    if json["errors"].as_bool().unwrap_or(false) {
+        let failed_count = json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| !v["error"].is_null())
+            .count();
+
+        // TODO: retry failures
+        log::info!("error : {:?}", json);
+        log::info!("Errors whilst indexing. Failures: {}", failed_count)
+    }
+
     let duration = now.elapsed();
     let secs = duration.as_secs_f64();
 
@@ -96,10 +143,9 @@ pub async fn bulkwrite(
         format!("{:?}", duration)
     };
 
-    log::debug!("Indexed {} logs in {}", data.len(), taken);
+    log::debug!("Indexed {} logs in {}", ok_len, taken);
 
-    buf.0.clear();
-    buf.1 = Instant::now();
+    Ok(())
 }
 
 pub fn create_client(addr: &str) -> Result<Elasticsearch, Error> {
