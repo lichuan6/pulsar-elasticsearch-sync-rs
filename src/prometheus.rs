@@ -1,9 +1,5 @@
 // use lazy_static::lazy_static;
-use prometheus::{
-    Encoder,
-    // HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
-    // Opts, Registry,
-};
+use prometheus::Encoder;
 use std::convert::Infallible;
 use warp::Filter;
 
@@ -27,22 +23,22 @@ use warp::Filter;
 //     )
 //     .expect("metric can be created");
 // }
-// 
+//
 // /// With the metrics defined(above), the next step is to register them with the
 // /// REGISTRY
 // pub fn register_custom_metrics() {
 //     REGISTRY
 //         .register(Box::new(INCOMING_REQUESTS.clone()))
 //         .expect("collector can be registered");
-// 
+//
 //     REGISTRY
 //         .register(Box::new(CONNECTED_CLIENTS.clone()))
 //         .expect("collector can be registered");
-// 
+//
 //     REGISTRY
 //         .register(Box::new(RESPONSE_CODE_COLLECTOR.clone()))
 //         .expect("collector can be registered");
-// 
+//
 //     REGISTRY
 //         .register(Box::new(RESPONSE_TIME_COLLECTOR.clone()))
 //         .expect("collector can be registered");
