@@ -98,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let buffer_size = opt.buffer_size;
     let interval = opt.flush_interval;
+    let debug_topics = opt.debug_topics;
     tokio::spawn(async move {
         // sink log to elasticsearch
         sink_elasticsearch_loop(&client, &mut rx, buffer_size, interval).await;
@@ -111,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &opt.topic_regex,
         opt.batch_size,
         tx,
+        &debug_topics,
     )
     .await?;
 
@@ -161,7 +163,7 @@ async fn sink_elasticsearch_loop(
 async fn consume_loop(
     pulsar: &Pulsar<TokioExecutor>, name: &str, subscription_name: &str,
     namespace: &str, topic_regex: &str, batch_size: u32,
-    tx: Sender<ChannelPayload>,
+    tx: Sender<ChannelPayload>, debug_topics: &str,
 ) -> Result<(), pulsar::Error> {
     let mut consumer: Consumer<Data, _> = create_consumer(
         &pulsar,
@@ -191,6 +193,9 @@ async fn consume_loop(
             }
 
             let (index, es_timestamp) = index_and_es_timestamp(&msg);
+            if index.starts_with(debug_topics) {
+                log::info!("Namespace: {}, data: {:?}", index, data);
+            }
             let payload = (index, es_timestamp, data);
 
             // Send messages to channel, for sinking to elasticsearch
