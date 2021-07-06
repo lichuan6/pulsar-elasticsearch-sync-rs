@@ -33,7 +33,7 @@ pub struct Opt {
     pub topic_regex: String,
 
     /// Pulsar topics for debug output, comma separated
-    #[structopt(short = "d", long, default_value = "")]
+    #[structopt(long, default_value = "")]
     pub debug_topics: String,
 
     /// Pulsar consumer batch size
