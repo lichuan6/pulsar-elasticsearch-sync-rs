@@ -2,6 +2,8 @@ use elasticsearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
     BulkOperation, BulkParts, Elasticsearch, Error,
 };
+
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -18,7 +20,7 @@ pub async fn index_json_from_str(
         .iter()
         .filter_map(|p| serde_json::from_str(p).ok())
         .map(|p: Option<serde_json::Value>| {
-            let p = transform(&p.unwrap(), Some(publish_time));
+            let p = transform(&p.unwrap(), Some(publish_time), None);
             BulkOperation::index(p).into()
         })
         .collect();
@@ -56,18 +58,59 @@ pub async fn index_json_from_str(
     Ok(())
 }
 
+fn f64_to_datetime(t: f64) -> DateTime<Local> {
+    let secs = (t as u64) / 1000;
+    let nsecs = (t as u64) % 1000 * 1_000_000
+        + ((t - t as u64 as f64) * 1_000_000f64) as u64;
+    let naive_datetime =
+        NaiveDateTime::from_timestamp(secs as i64, nsecs as u32);
+    let date_time: DateTime<Local> =
+        Local.from_local_datetime(&naive_datetime).unwrap();
+    date_time
+}
+
+// convert time_key as datetime string, return None if key's value is not valid
+fn get_time_key(
+    m: &serde_json::Map<String, serde_json::Value>, time_key: &str,
+) -> Option<String> {
+    match m.get(time_key) {
+        Some(serde_json::Value::Number(_)) => {
+            let t = m.get(time_key).unwrap().clone();
+            let t = t.as_f64().unwrap();
+            let date_time = f64_to_datetime(t);
+            Some(date_time.to_rfc3339())
+        }
+        Some(_) | None => None,
+    }
+}
+
+/// transform will try to convert raw log into elasticsearch document by replacing dot to
+/// underscore for the keys, and will use custome specific key `time_key` as `@timestamp` field
 fn transform(
     value: &serde_json::Value, publish_time: Option<&str>,
+    time_key: Option<&str>,
 ) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {
             let mut m = serde_json::Map::new();
-            if let Some(publish_time) = publish_time {
-                m.insert("@timestamp".into(), publish_time.into());
+            let mut use_time_key = false;
+            if let Some(time_key) = time_key {
+                // get time_key(ts) value(type of serde_json::Value::Number), create a timestamp
+                if let Some(timestamp) = get_time_key(map, time_key) {
+                    // use custom time key
+                    m.insert("@timestamp".into(), timestamp.into());
+                    use_time_key = true;
+                }
             }
+            if !use_time_key {
+                if let Some(publish_time) = publish_time {
+                    m.insert("@timestamp".into(), publish_time.into());
+                }
+            }
+
             for (k, v) in map.iter() {
                 let replaced_key = k.replace(".", "_");
-                m.insert(replaced_key, transform(&v, None));
+                m.insert(replaced_key, transform(&v, None, None));
             }
             serde_json::Value::Object(m)
         }
@@ -78,22 +121,23 @@ fn transform(
 pub async fn bulkwrite_and_clear(
     client: &Elasticsearch,
     buffer_map: &mut HashMap<String, Vec<(String, String)>>,
+    time_key: Option<&str>,
 ) {
     for (index, buf) in buffer_map.iter() {
-        let _ = bulkwrite(client, index, buf).await;
+        let _ = bulkwrite(client, index, buf, time_key).await;
     }
     buffer_map.clear();
 }
 
-fn split_buffer(
-    buf: &[(String, String)],
-) -> (Vec<BulkOperation<serde_json::Value>>, Vec<&String>) {
+fn split_buffer<'a, 'b>(
+    buf: &'a [(String, String)], time_key: Option<&'b str>,
+) -> (Vec<BulkOperation<serde_json::Value>>, Vec<&'a String>) {
     let mut oks = Vec::new();
     let mut errors = Vec::new();
 
     for (publish_time, raw_log) in buf.iter() {
         if let Ok(log) = serde_json::from_str(raw_log) {
-            let log = transform(&log, Some(publish_time));
+            let log = transform(&log, Some(publish_time), time_key);
             oks.push(BulkOperation::index(log).into());
         } else {
             errors.push(raw_log);
@@ -104,10 +148,11 @@ fn split_buffer(
 
 pub async fn bulkwrite(
     client: &Elasticsearch, index: &str, buf: &[(String, String)],
+    time_key: Option<&str>,
 ) -> Result<(), Error> {
     let now = Instant::now();
     // add publish_time as `@timestamp` to raw log by calling transform
-    let (body, errors) = split_buffer(buf);
+    let (body, errors) = split_buffer(buf, time_key);
 
     let ok_len = body.len();
     log::debug!("serde OK : {}", ok_len);
@@ -156,4 +201,19 @@ pub fn create_client(addr: &str) -> Result<Elasticsearch, Error> {
 
     let transport = builder.build()?;
     Ok(Elasticsearch::new(transport))
+}
+
+#[test]
+fn trasform_ts_as_time_key() {
+    let s = r#"
+    {"ts": 1626057993894.9734, "name": "hi"}
+    "#;
+    let v: serde_json::Value = serde_json::from_str(s).unwrap();
+    let publish_time = "2046-10-04T03:33:33.233323332+08:00";
+    let res = transform(&v, None, Some("ts"));
+    assert!(res["@timestamp"].to_string().starts_with("\"2021-07-12T02:46:33"));
+    let res = transform(&v, Some(publish_time), None);
+    assert!(res["@timestamp"]
+        .to_string()
+        .starts_with(&format!("\"{}", publish_time)));
 }
