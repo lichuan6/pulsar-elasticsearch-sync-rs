@@ -33,8 +33,8 @@ pub struct Opt {
     pub topic_regex: String,
 
     /// Pulsar topics for debug output, comma separated
-    #[structopt(long, default_value = "")]
-    pub debug_topics: String,
+    #[structopt(long)]
+    pub debug_topics: Option<String>,
 
     /// Pulsar consumer batch size
     #[structopt(short = "b", long, default_value = "1000")]
@@ -44,6 +44,14 @@ pub struct Opt {
     #[structopt(short = "s", long, default_value = "1000")]
     pub buffer_size: usize,
 
+    /// key in log as timestamp, default is to use pulsar message publishtime
+    #[structopt(long)]
+    pub time_key: Option<String>,
+
+    // TODO: use may need custom time format
+    // timestamp format
+    // #[structopt(long)]
+    // pub time_format: String,
     /// Flush interval for checking messages, default is 5000(5s)
     #[structopt(short = "f", long, default_value = "5000")]
     pub flush_interval: u32,

@@ -7,7 +7,12 @@ use pulsar::{
 use pulsar_elasticsearch_sync_rs::prometheus::run_warp_server;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, string::FromUtf8Error, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    string::FromUtf8Error,
+    time::Duration,
+};
 use structopt::StructOpt;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::time;
@@ -98,10 +103,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let buffer_size = opt.buffer_size;
     let interval = opt.flush_interval;
+    let time_key = opt.time_key;
     let debug_topics = opt.debug_topics;
     tokio::spawn(async move {
         // sink log to elasticsearch
-        sink_elasticsearch_loop(&client, &mut rx, buffer_size, interval).await;
+        sink_elasticsearch_loop(
+            &client,
+            &mut rx,
+            buffer_size,
+            interval,
+            time_key.as_ref().map(String::as_ref),
+        )
+        .await;
     });
 
     consume_loop(
@@ -112,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &opt.topic_regex,
         opt.batch_size,
         tx,
-        &debug_topics,
+        debug_topics.as_ref().map(String::as_ref),
     )
     .await?;
 
@@ -121,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
-    buffer_size: usize, flush_interval: u32,
+    buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
 ) {
     let mut total = 0;
 
@@ -146,14 +159,14 @@ async fn sink_elasticsearch_loop(
                  // every buffer_size number of logs, sink to elasticsearch
                  if total % buffer_size == 0 {
                      // sink and clear map
-                     es::bulkwrite_and_clear(&client, &mut buffer_map).await;
+                     es::bulkwrite_and_clear(&client, &mut buffer_map, time_key).await;
                  }
             },
             _ = interval.tick() => {
                 log::debug!("{}ms passed", flush_interval);
                 if !buffer_map.is_empty() {
                     log::debug!("buffer_map is not emptry, len: {}", buffer_map.len());
-                    es::bulkwrite_and_clear(&client, &mut buffer_map).await;
+                    es::bulkwrite_and_clear(&client, &mut buffer_map, time_key).await;
                 }
             }
         }
@@ -163,7 +176,7 @@ async fn sink_elasticsearch_loop(
 async fn consume_loop(
     pulsar: &Pulsar<TokioExecutor>, name: &str, subscription_name: &str,
     namespace: &str, topic_regex: &str, batch_size: u32,
-    tx: Sender<ChannelPayload>, debug_topics: &str,
+    tx: Sender<ChannelPayload>, debug_topics: Option<&str>,
 ) -> Result<(), pulsar::Error> {
     let mut consumer: Consumer<Data, _> = create_consumer(
         &pulsar,
@@ -174,6 +187,13 @@ async fn consume_loop(
         batch_size,
     )
     .await?;
+
+    let debug_topics: HashSet<_> = debug_topics
+        .unwrap_or("")
+        .split(",")
+        .filter(|x| *x != "")
+        .into_iter()
+        .collect();
 
     // TODO: export consumed messages count metrics
     // i.e let mut total = 0;
@@ -193,7 +213,8 @@ async fn consume_loop(
             }
 
             let (index, es_timestamp) = index_and_es_timestamp(&msg);
-            if index.starts_with(debug_topics) {
+            if !debug_topics.is_empty() && debug_topics.contains(index.as_str())
+            {
                 log::info!("Namespace: {}, data: {:?}", index, data);
             }
             let payload = (index, es_timestamp, data);
