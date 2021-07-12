@@ -188,7 +188,7 @@ async fn consume_loop(
     )
     .await?;
 
-    let debug_topics_set: HashSet<&str> = debug_topics
+    let debug_topics: HashSet<_> = debug_topics
         .unwrap_or("")
         .split(",")
         .filter(|x| *x != "")
@@ -213,7 +213,8 @@ async fn consume_loop(
             }
 
             let (index, es_timestamp) = index_and_es_timestamp(&msg);
-            if debug_topics_set.contains(&index as &str) {
+            if !debug_topics.is_empty() && debug_topics.contains(index.as_str())
+            {
                 log::info!("Namespace: {}, data: {:?}", index, data);
             }
             let payload = (index, es_timestamp, data);
