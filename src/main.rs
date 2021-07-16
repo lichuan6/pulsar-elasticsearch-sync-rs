@@ -190,8 +190,8 @@ async fn consume_loop(
 
     let debug_topics: HashSet<_> = debug_topics
         .unwrap_or("")
-        .split(",")
-        .filter(|x| *x != "")
+        .split(',')
+        .filter(|x| !x.is_empty())
         .into_iter()
         .collect();
 

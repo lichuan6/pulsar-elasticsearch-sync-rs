@@ -3,7 +3,7 @@ use elasticsearch::{
     BulkOperation, BulkParts, Elasticsearch, Error,
 };
 
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -58,15 +58,13 @@ pub async fn index_json_from_str(
     Ok(())
 }
 
-fn f64_to_datetime(t: f64) -> DateTime<Local> {
+fn f64_to_datetime(t: f64) -> DateTime<Utc> {
     let secs = (t as u64) / 1000;
     let nsecs = (t as u64) % 1000 * 1_000_000
         + ((t - t as u64 as f64) * 1_000_000f64) as u64;
     let naive_datetime =
         NaiveDateTime::from_timestamp(secs as i64, nsecs as u32);
-    let date_time: DateTime<Local> =
-        Local.from_local_datetime(&naive_datetime).unwrap();
-    date_time
+    DateTime::<Utc>::from_utc(naive_datetime, Utc)
 }
 
 // convert time_key as datetime string, return None if key's value is not valid
