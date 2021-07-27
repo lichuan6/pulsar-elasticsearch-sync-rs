@@ -12,7 +12,7 @@ lazy_static! {
                 "pulsar_message_consumed_total",
                 "consumed messages from pulsar topics"
             ),
-            &["topic"]
+            &["topic", "date"]
         )
         .expect("metric can be created");
     pub static ref ELASTICSEARCH_WRITE_SUCCESS_TOTAL: IntCounterVec =
@@ -21,7 +21,7 @@ lazy_static! {
                 "elasticsearch_write_success_total",
                 "total messages successfully written to elasticsearch"
             ),
-            &["topic"]
+            &["topic", "date"]
         )
         .expect("metric can be created");
     pub static ref ELASTICSEARCH_WRITE_FAILED_TOTAL: IntCounterVec =
@@ -30,7 +30,7 @@ lazy_static! {
                 "elasticsearch_write_failed_total",
                 "total messages failed to written to elasticsearch"
             ),
-            &["topic"]
+            &["topic", "date"]
         )
         .expect("metric can be created");
 }
@@ -92,7 +92,7 @@ pub async fn metric_handler() -> Result<impl warp::Reply, Infallible> {
 }
 
 pub async fn run_warp_server() {
-    // register_custom_metrics();
+    register_custom_metrics();
     // prometheus will call `$host:3030/metrics` to fetch metrics
     let metric =
         warp::path!("metrics").and(warp::get()).and_then(metric_handler);
