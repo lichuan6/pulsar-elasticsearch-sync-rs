@@ -1,13 +1,19 @@
+use crate::prometheus::{
+    elasticsearch_write_failed_total, elasticsearch_write_success_total,
+};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use elasticsearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
     BulkOperation, BulkParts, Elasticsearch, Error,
 };
-
-use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Instant;
 use url::Url;
+
+pub fn split_index_and_date_str(s: &str) -> Option<(&str, &str)> {
+    s.rsplit_once('-')
+}
 
 /// Reads messages from pulsar topic and indexes
 /// them into Elasticsearch using the bulk API. An index with explicit mapping
@@ -148,6 +154,14 @@ pub async fn bulkwrite(
     client: &Elasticsearch, index: &str, buf: &[(String, String)],
     time_key: Option<&str>,
 ) -> Result<(), Error> {
+    let (topic, date_str) = match split_index_and_date_str(index) {
+        Some(v) => v,
+        None => {
+            log::info!("bad index format: {}", index);
+            return Ok(());
+        }
+    };
+
     let now = Instant::now();
     // add publish_time as `@timestamp` to raw log by calling transform
     let (body, errors) = split_buffer(buf, time_key);
@@ -174,7 +188,8 @@ pub async fn bulkwrite(
 
         // TODO: retry failures
         log::info!("error : {:?}", json);
-        log::info!("Errors whilst indexing. Failures: {}", failed_count)
+        log::info!("Errors whilst indexing. Failures: {}", failed_count);
+        elasticsearch_write_failed_total(topic, date_str, failed_count as u64);
     }
 
     let duration = now.elapsed();
@@ -187,6 +202,8 @@ pub async fn bulkwrite(
     };
 
     log::debug!("Indexed {} logs in {}", ok_len, taken);
+
+    elasticsearch_write_success_total(topic, date_str, ok_len as u64);
 
     Ok(())
 }
