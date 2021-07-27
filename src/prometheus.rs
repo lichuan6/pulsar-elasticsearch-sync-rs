@@ -1,60 +1,92 @@
-// use lazy_static::lazy_static;
-use prometheus::Encoder;
+use lazy_static::lazy_static;
+use prometheus::{Encoder, IntCounterVec, Opts, Registry};
 use std::convert::Infallible;
 use warp::Filter;
 
 // TODO: add more application metrics
-// lazy_static! {
-//     pub static ref REGISTRY: Registry = Registry::new();
-//     pub static ref INCOMING_REQUESTS: IntCounter =
-//         IntCounter::new("incoming_requests", "Incoming Requests")
-//             .expect("metric can be created");
-//     pub static ref CONNECTED_CLIENTS: IntGauge =
-//         IntGauge::new("connected_clients", "Connected Clients")
-//             .expect("metric can be created");
-//     pub static ref RESPONSE_CODE_COLLECTOR: IntCounterVec = IntCounterVec::new(
-//         Opts::new("response_code", "Response Codes"),
-//         &["env", "statuscode", "type"]
-//     )
-//     .expect("metric can be created");
-//     pub static ref RESPONSE_TIME_COLLECTOR: HistogramVec = HistogramVec::new(
-//         HistogramOpts::new("response_time", "Response Times"),
-//         &["env"]
-//     )
-//     .expect("metric can be created");
-// }
-//
-// /// With the metrics defined(above), the next step is to register them with the
-// /// REGISTRY
-// pub fn register_custom_metrics() {
-//     REGISTRY
-//         .register(Box::new(INCOMING_REQUESTS.clone()))
-//         .expect("collector can be registered");
-//
-//     REGISTRY
-//         .register(Box::new(CONNECTED_CLIENTS.clone()))
-//         .expect("collector can be registered");
-//
-//     REGISTRY
-//         .register(Box::new(RESPONSE_CODE_COLLECTOR.clone()))
-//         .expect("collector can be registered");
-//
-//     REGISTRY
-//         .register(Box::new(RESPONSE_TIME_COLLECTOR.clone()))
-//         .expect("collector can be registered");
-// }
+lazy_static! {
+    pub static ref REGISTRY: Registry = Registry::new();
+    pub static ref PULSAR_MESSAGE_CONSUMED_TOTAL: IntCounterVec =
+        IntCounterVec::new(
+            Opts::new(
+                "pulsar_message_consumed_total",
+                "consumed messages from pulsar topics"
+            ),
+            &["topic"]
+        )
+        .expect("metric can be created");
+    pub static ref ELASTICSEARCH_WRITE_SUCCESS_TOTAL: IntCounterVec =
+        IntCounterVec::new(
+            Opts::new(
+                "elasticsearch_write_success_total",
+                "total messages successfully written to elasticsearch"
+            ),
+            &["topic"]
+        )
+        .expect("metric can be created");
+    pub static ref ELASTICSEARCH_WRITE_FAILED_TOTAL: IntCounterVec =
+        IntCounterVec::new(
+            Opts::new(
+                "elasticsearch_write_failed_total",
+                "total messages failed to written to elasticsearch"
+            ),
+            &["topic"]
+        )
+        .expect("metric can be created");
+}
+
+pub fn pulsar_received_messages_inc_by(topic: &str, date: &str, v: u64) {
+    PULSAR_MESSAGE_CONSUMED_TOTAL.with_label_values(&[topic, date]).inc_by(v);
+}
+
+pub fn elasticsearch_write_success_total(topic: &str, date: &str, v: u64) {
+    ELASTICSEARCH_WRITE_SUCCESS_TOTAL
+        .with_label_values(&[topic, date])
+        .inc_by(v);
+}
+
+pub fn elasticsearch_write_failed_total(topic: &str, date: &str, v: u64) {
+    ELASTICSEARCH_WRITE_FAILED_TOTAL
+        .with_label_values(&[topic, date])
+        .inc_by(v);
+}
+
+/// With the metrics defined(above), the next step is to register them with the
+/// REGISTRY
+pub fn register_custom_metrics() {
+    REGISTRY
+        .register(Box::new(PULSAR_MESSAGE_CONSUMED_TOTAL.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(ELASTICSEARCH_WRITE_SUCCESS_TOTAL.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(ELASTICSEARCH_WRITE_FAILED_TOTAL.clone()))
+        .expect("collector can be registered");
+}
+
+fn metrics_buffer(
+    metric_families: &[prometheus::proto::MetricFamily],
+) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    let encoder = prometheus::TextEncoder::new();
+    encoder.encode(metric_families, &mut buffer).unwrap();
+    buffer
+}
 
 pub async fn metric_handler() -> Result<impl warp::Reply, Infallible> {
     // A default ProcessCollector is registered automatically.
-    let mut buffer = Vec::new();
-    let encoder = prometheus::TextEncoder::new();
-
-    let metric_families = prometheus::gather();
-    encoder.encode(&metric_families, &mut buffer).unwrap();
+    let mut default_metrics = metrics_buffer(&prometheus::gather());
+    let mut custom_metrics = metrics_buffer(&REGISTRY.gather());
 
     // Format output to String and return as http response
-    let res = String::from_utf8(buffer.clone()).unwrap();
-    buffer.clear();
+    let res = format!(
+        "{}{}",
+        String::from_utf8(default_metrics.clone()).unwrap(),
+        String::from_utf8(custom_metrics.clone()).unwrap()
+    );
+    default_metrics.clear();
+    custom_metrics.clear();
 
     Ok(res)
 }

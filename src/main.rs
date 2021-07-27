@@ -4,7 +4,10 @@ use pulsar::{
     Authentication, Consumer, ConsumerOptions, DeserializeMessage, Payload,
     Pulsar, SubType, TokioExecutor,
 };
-use pulsar_elasticsearch_sync_rs::prometheus::run_warp_server;
+use pulsar_elasticsearch_sync_rs::{
+    es::split_index_and_date_str,
+    prometheus::{pulsar_received_messages_inc_by, run_warp_server},
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -132,6 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Read pulsar messages from Receiver and write theme to elasticsearch
 async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
     buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
@@ -216,6 +220,9 @@ async fn consume_loop(
             if !debug_topics.is_empty() && debug_topics.contains(index.as_str())
             {
                 log::info!("Namespace: {}, data: {:?}", index, data);
+            }
+            if let Some((topic, date_str)) = split_index_and_date_str(&index) {
+                pulsar_received_messages_inc_by(topic, date_str, 1);
             }
             let payload = (index, es_timestamp, data);
 
