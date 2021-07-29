@@ -1,5 +1,8 @@
 use crate::prometheus::{
-    elasticsearch_write_failed_total, elasticsearch_write_success_total,
+    elasticsearch_write_failed_total,
+    elasticsearch_write_failed_with_date_total,
+    elasticsearch_write_success_total,
+    elasticsearch_write_success_with_date_total,
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use elasticsearch::{
@@ -189,7 +192,12 @@ pub async fn bulkwrite(
         // TODO: retry failures
         log::info!("error : {:?}", json);
         log::info!("Errors whilst indexing. Failures: {}", failed_count);
-        elasticsearch_write_failed_total(topic, date_str, failed_count as u64);
+        elasticsearch_write_failed_total(topic, failed_count as u64);
+        elasticsearch_write_failed_with_date_total(
+            topic,
+            date_str,
+            failed_count as u64,
+        );
     }
 
     let duration = now.elapsed();
@@ -203,7 +211,8 @@ pub async fn bulkwrite(
 
     log::debug!("Indexed {} logs in {}", ok_len, taken);
 
-    elasticsearch_write_success_total(topic, date_str, ok_len as u64);
+    elasticsearch_write_success_total(topic, ok_len as u64);
+    elasticsearch_write_success_with_date_total(topic, date_str, ok_len as u64);
 
     Ok(())
 }

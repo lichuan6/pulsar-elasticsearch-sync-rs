@@ -6,7 +6,10 @@ use pulsar::{
 };
 use pulsar_elasticsearch_sync_rs::{
     es::split_index_and_date_str,
-    prometheus::{pulsar_received_messages_inc_by, run_warp_server},
+    prometheus::{
+        pulsar_received_messages_inc_by,
+        pulsar_received_messages_with_date_inc_by, run_warp_server,
+    },
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -222,7 +225,8 @@ async fn consume_loop(
                 log::info!("Namespace: {}, data: {:?}", index, data);
             }
             if let Some((topic, date_str)) = split_index_and_date_str(&index) {
-                pulsar_received_messages_inc_by(topic, date_str, 1);
+                pulsar_received_messages_with_date_inc_by(topic, date_str, 1);
+                pulsar_received_messages_inc_by(topic, 1);
             }
             let payload = (index, es_timestamp, data);
 

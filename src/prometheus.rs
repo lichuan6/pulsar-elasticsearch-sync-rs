@@ -12,7 +12,7 @@ lazy_static! {
                 "pulsar_message_consumed_total",
                 "consumed messages from pulsar topics"
             ),
-            &["topic", "date"]
+            &["topic"]
         )
         .expect("metric can be created");
     pub static ref ELASTICSEARCH_WRITE_SUCCESS_TOTAL: IntCounterVec =
@@ -21,7 +21,7 @@ lazy_static! {
                 "elasticsearch_write_success_total",
                 "total messages successfully written to elasticsearch"
             ),
-            &["topic", "date"]
+            &["topic"]
         )
         .expect("metric can be created");
     pub static ref ELASTICSEARCH_WRITE_FAILED_TOTAL: IntCounterVec =
@@ -30,23 +30,70 @@ lazy_static! {
                 "elasticsearch_write_failed_total",
                 "total messages failed to written to elasticsearch"
             ),
+            &["topic"]
+        )
+        .expect("metric can be created");
+    pub static ref PULSAR_MESSAGE_CONSUMED_WITH_DATE_TOTAL: IntCounterVec =
+        IntCounterVec::new(
+            Opts::new(
+                "pulsar_message_consumed_with_date_total",
+                "consumed messages from pulsar topics"
+            ),
+            &["topic", "date"]
+        )
+        .expect("metric can be created");
+    pub static ref ELASTICSEARCH_WRITE_SUCCESS_WITH_DATE_TOTAL: IntCounterVec =
+        IntCounterVec::new(
+            Opts::new(
+                "elasticsearch_write_success_with_date_total",
+                "total messages successfully written to elasticsearch"
+            ),
+            &["topic", "date"]
+        )
+        .expect("metric can be created");
+    pub static ref ELASTICSEARCH_WRITE_FAILED_WITH_DATE_TOTAL: IntCounterVec =
+        IntCounterVec::new(
+            Opts::new(
+                "elasticsearch_write_failed_with_date_total",
+                "total messages failed to written to elasticsearch"
+            ),
             &["topic", "date"]
         )
         .expect("metric can be created");
 }
 
-pub fn pulsar_received_messages_inc_by(topic: &str, date: &str, v: u64) {
-    PULSAR_MESSAGE_CONSUMED_TOTAL.with_label_values(&[topic, date]).inc_by(v);
+pub fn pulsar_received_messages_inc_by(topic: &str, v: u64) {
+    PULSAR_MESSAGE_CONSUMED_TOTAL.with_label_values(&[topic]).inc_by(v);
 }
 
-pub fn elasticsearch_write_success_total(topic: &str, date: &str, v: u64) {
-    ELASTICSEARCH_WRITE_SUCCESS_TOTAL
+pub fn elasticsearch_write_success_total(topic: &str, v: u64) {
+    ELASTICSEARCH_WRITE_SUCCESS_TOTAL.with_label_values(&[topic]).inc_by(v);
+}
+
+pub fn elasticsearch_write_failed_total(topic: &str, v: u64) {
+    ELASTICSEARCH_WRITE_FAILED_TOTAL.with_label_values(&[topic]).inc_by(v);
+}
+
+pub fn pulsar_received_messages_with_date_inc_by(
+    topic: &str, date: &str, v: u64,
+) {
+    PULSAR_MESSAGE_CONSUMED_WITH_DATE_TOTAL
         .with_label_values(&[topic, date])
         .inc_by(v);
 }
 
-pub fn elasticsearch_write_failed_total(topic: &str, date: &str, v: u64) {
-    ELASTICSEARCH_WRITE_FAILED_TOTAL
+pub fn elasticsearch_write_success_with_date_total(
+    topic: &str, date: &str, v: u64,
+) {
+    ELASTICSEARCH_WRITE_SUCCESS_WITH_DATE_TOTAL
+        .with_label_values(&[topic, date])
+        .inc_by(v);
+}
+
+pub fn elasticsearch_write_failed_with_date_total(
+    topic: &str, date: &str, v: u64,
+) {
+    ELASTICSEARCH_WRITE_FAILED_WITH_DATE_TOTAL
         .with_label_values(&[topic, date])
         .inc_by(v);
 }
@@ -62,6 +109,15 @@ pub fn register_custom_metrics() {
         .expect("collector can be registered");
     REGISTRY
         .register(Box::new(ELASTICSEARCH_WRITE_FAILED_TOTAL.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(PULSAR_MESSAGE_CONSUMED_WITH_DATE_TOTAL.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(ELASTICSEARCH_WRITE_SUCCESS_WITH_DATE_TOTAL.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(ELASTICSEARCH_WRITE_FAILED_WITH_DATE_TOTAL.clone()))
         .expect("collector can be registered");
 }
 
