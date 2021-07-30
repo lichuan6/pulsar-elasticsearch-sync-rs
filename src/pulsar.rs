@@ -95,8 +95,6 @@ pub async fn consume_loop(
         .into_iter()
         .collect();
 
-    // TODO: export consumed messages count metrics
-    // i.e let mut total = 0;
     while let Ok(msg) = consumer.try_next().await {
         if let Some(msg) = msg {
             consumer.ack(&msg).await?;
@@ -117,6 +115,7 @@ pub async fn consume_loop(
             {
                 log::info!("Namespace: {}, data: {:?}", index, data);
             }
+            // export consumed messages count metrics
             if let Some((topic, date_str)) = split_index_and_date_str(&index) {
                 pulsar_received_messages_with_date_inc_by(topic, date_str, 1);
                 pulsar_received_messages_inc_by(topic, 1);

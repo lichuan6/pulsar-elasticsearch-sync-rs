@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consumer_name = "consumer-pulsar-elasticsearch-sync-rs";
     let subscription_name = "pulsar-elasticsearch-sync-rs";
     log::info!(
-        "pulsar elasticserach sync started, begin to consume messages..."
+        "pulsar elasticsearch sync started, begin to consume messages..."
     );
 
     let (tx, mut rx) = channel::<pulsar::ChannelPayload>(2048);
