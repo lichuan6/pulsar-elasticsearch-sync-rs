@@ -1,8 +1,11 @@
-use crate::prometheus::{
-    elasticsearch_write_failed_total,
-    elasticsearch_write_failed_with_date_total,
-    elasticsearch_write_success_total,
-    elasticsearch_write_success_with_date_total,
+use crate::{
+    prometheus::{
+        elasticsearch_write_failed_total,
+        elasticsearch_write_failed_with_date_total,
+        elasticsearch_write_success_total,
+        elasticsearch_write_success_with_date_total,
+    },
+    pulsar::ChannelPayload,
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use elasticsearch::{
@@ -10,8 +13,10 @@ use elasticsearch::{
     BulkOperation, BulkParts, Elasticsearch, Error,
 };
 use serde_json::Value;
-use std::collections::HashMap;
 use std::time::Instant;
+use std::{collections::HashMap, time::Duration};
+use tokio::sync::mpsc::Receiver;
+use tokio::time;
 use url::Url;
 
 pub fn split_index_and_date_str(s: &str) -> Option<(&str, &str)> {
@@ -117,7 +122,7 @@ fn transform(
 
             for (k, v) in map.iter() {
                 let replaced_key = k.replace(".", "_");
-                m.insert(replaced_key, transform(&v, None, None));
+                m.insert(replaced_key, transform(v, None, None));
             }
             serde_json::Value::Object(m)
         }
@@ -225,6 +230,48 @@ pub fn create_client(addr: &str) -> Result<Elasticsearch, Error> {
 
     let transport = builder.build()?;
     Ok(Elasticsearch::new(transport))
+}
+
+/// Read pulsar messages from Receiver and write theme to elasticsearch
+pub async fn sink_elasticsearch_loop(
+    client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
+    buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
+) {
+    let mut total = 0;
+
+    // offload raw logs, and merge same logs belong to specific topic, and bulk write to es
+    // TODO: use HashMap<&str, (&str, &str)> ?
+    let mut buffer_map = HashMap::<String, Vec<(String, String)>>::new();
+
+    // consume messages or timeout
+    let mut interval =
+        time::interval(Duration::from_millis(flush_interval as u64));
+
+    loop {
+        tokio::select! {
+            Some(payload) = rx.recv() => {
+                 total += 1;
+
+                 // save payload to buffer map
+                 let (index, es_timestamp, data) = payload;
+                 let buf = buffer_map.entry(index).or_insert_with(Vec::new);
+                 buf.push((es_timestamp, data));
+
+                 // every buffer_size number of logs, sink to elasticsearch
+                 if total % buffer_size == 0 {
+                     // sink and clear map
+                     bulkwrite_and_clear(client, &mut buffer_map, time_key).await;
+                 }
+            },
+            _ = interval.tick() => {
+                log::debug!("{}ms passed", flush_interval);
+                if !buffer_map.is_empty() {
+                    log::debug!("buffer_map is not emptry, len: {}", buffer_map.len());
+                    bulkwrite_and_clear(client, &mut buffer_map, time_key).await;
+                }
+            }
+        }
+    }
 }
 
 #[test]

@@ -155,3 +155,7 @@ pub async fn run_warp_server() {
 
     warp::serve(metric).run(([0, 0, 0, 0], 3030)).await
 }
+
+pub fn run_metric_server() {
+    tokio::task::spawn(run_warp_server());
+}
