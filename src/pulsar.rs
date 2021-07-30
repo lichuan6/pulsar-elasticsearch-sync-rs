@@ -1,4 +1,11 @@
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use crate::{
+    es::split_index_and_date_str,
+    prometheus::{
+        pulsar_received_messages_inc_by,
+        pulsar_received_messages_with_date_inc_by,
+    },
+    util::index_and_es_timestamp,
+};
 use futures::TryStreamExt;
 use pulsar::{
     Authentication, Consumer, ConsumerOptions, DeserializeMessage, Payload,
@@ -6,20 +13,14 @@ use pulsar::{
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::string::FromUtf8Error;
-use std::{
-    collections::{HashMap, HashSet},
-    env,
-    time::Duration,
-};
-use structopt::StructOpt;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::time;
+use std::{collections::HashSet, env, string::FromUtf8Error, time::Duration};
+use tokio::sync::mpsc::Sender;
 
-type ChannelPayload = (String, String, String);
+pub type ChannelPayload = (String, String, String);
+pub type Message<T> = pulsar::consumer::Message<T>;
 
 #[derive(Serialize, Deserialize)]
-struct Data;
+pub struct Data;
 
 impl DeserializeMessage for Data {
     type Output = Result<String, FromUtf8Error>;
@@ -31,9 +32,9 @@ impl DeserializeMessage for Data {
 
 // pub fn create_pulsar<S: Into<String>>(url: S, executor: Exe) -> Pulsar<_> {
 pub async fn create_pulsar(
-    url: &str, token: &str,
-) -> Result<Pulsar<TokioExecutor>, Error> {
-    let mut builder = Pulsar::builder(addr, TokioExecutor);
+    url: &str,
+) -> Result<Pulsar<TokioExecutor>, pulsar::error::Error> {
+    let mut builder = Pulsar::builder(url, TokioExecutor);
 
     if let Ok(token) = env::var("PULSAR_TOKEN") {
         let authentication = Authentication {
@@ -44,13 +45,9 @@ pub async fn create_pulsar(
         builder = builder.with_auth(authentication);
     }
 
-    let pulsar_namespace = env::var("PULSAR_NAMESPACE")
-        .ok()
-        .unwrap_or_else(|| opt.pulsar_namespace.clone());
-
     let pulsar: Pulsar<_> = builder.build().await?;
 
-    pulsar
+    Ok(pulsar)
 }
 
 pub async fn create_consumer(
@@ -82,7 +79,7 @@ pub async fn consume_loop(
     tx: Sender<ChannelPayload>, debug_topics: Option<&str>,
 ) -> Result<(), pulsar::Error> {
     let mut consumer: Consumer<Data, _> = create_consumer(
-        &pulsar,
+        pulsar,
         name,
         namespace,
         topic_regex,
@@ -134,7 +131,7 @@ pub async fn consume_loop(
             tokio::time::sleep(Duration::from_secs(10)).await;
 
             consumer = match create_consumer(
-                &pulsar,
+                pulsar,
                 name,
                 namespace,
                 topic_regex,
