@@ -56,6 +56,10 @@ pub struct Opt {
     #[structopt(short = "f", long, default_value = "5000")]
     pub flush_interval: u32,
 
+    /// Channel buffer size for receiving messages, default is 2048
+    #[structopt(long, default_value = "2048")]
+    pub channel_buffer_size: usize,
+
     /// Elasticsearch address
     #[structopt(short, long, default_value = "http://localhost:9200")]
     pub elasticsearch_addr: String,

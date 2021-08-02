@@ -13,15 +13,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_metric_server();
 
     let opt = Opt::from_args();
-
     let addr = env::var("PULSAR_ADDRESS")
         .ok()
         .unwrap_or_else(|| opt.pulsar_addr.clone());
-
     let es_addr = env::var("ELASTICSEARCH_ADDRESS")
         .ok()
         .unwrap_or_else(|| opt.elasticsearch_addr.clone());
-
     let client = es::create_client(&es_addr).unwrap();
 
     let consumer_name = "consumer-pulsar-elasticsearch-sync-rs";
@@ -30,13 +27,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "pulsar elasticsearch sync started, begin to consume messages..."
     );
 
-    let (tx, mut rx) = channel::<pulsar::ChannelPayload>(2048);
-
     let buffer_size = opt.buffer_size;
     let interval = opt.flush_interval;
     let time_key = opt.time_key;
     let debug_topics = opt.debug_topics;
     let pulsar_namespace = opt.pulsar_namespace;
+    let channel_buffer_size = opt.channel_buffer_size;
+
+    let (tx, mut rx) = channel::<pulsar::ChannelPayload>(channel_buffer_size);
     tokio::spawn(async move {
         // sink log to elasticsearch
         sink_elasticsearch_loop(
