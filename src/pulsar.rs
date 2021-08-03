@@ -11,7 +11,7 @@ use pulsar::{
     Authentication, Consumer, ConsumerOptions, DeserializeMessage, Payload,
     Pulsar, SubType, TokioExecutor,
 };
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, env, string::FromUtf8Error, time::Duration};
 use tokio::sync::mpsc::Sender;
@@ -77,6 +77,7 @@ pub async fn consume_loop(
     pulsar: &Pulsar<TokioExecutor>, name: &str, subscription_name: &str,
     namespace: &str, topic_regex: &str, batch_size: u32,
     tx: Sender<ChannelPayload>, debug_topics: Option<&str>,
+    global_filters: Option<&RegexSet>,
 ) -> Result<(), pulsar::Error> {
     let mut consumer: Consumer<Data, _> = create_consumer(
         pulsar,
@@ -108,6 +109,14 @@ pub async fn consume_loop(
 
             if data.is_empty() {
                 continue;
+            }
+
+            // filter messages using global_filters
+            if let Some(global_filters) = global_filters {
+                if global_filters.is_match(&data) {
+                    log::debug!("data match global filters: {}, skip", data);
+                    continue;
+                }
             }
 
             let (index, es_timestamp) = index_and_es_timestamp(&msg);

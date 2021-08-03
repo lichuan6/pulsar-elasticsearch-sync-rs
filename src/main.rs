@@ -1,6 +1,6 @@
 use crate::{es::sink_elasticsearch_loop, pulsar::consume_loop};
 use pulsar_elasticsearch_sync_rs::{
-    args::Opt, es, prometheus::run_metric_server, pulsar,
+    args::Opt, es, prometheus::run_metric_server, pulsar, util::create_regexset,
 };
 use std::env;
 use structopt::StructOpt;
@@ -33,6 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let debug_topics = opt.debug_topics;
     let pulsar_namespace = opt.pulsar_namespace;
     let channel_buffer_size = opt.channel_buffer_size;
+    let global_filters = opt.global_filters;
+    let global_filter_set = create_regexset(global_filters).unwrap_or(None);
+    let pulsar_namespace = env::var("PULSAR_NAMESPACE")
+        .ok()
+        .unwrap_or_else(|| pulsar_namespace.clone());
 
     let (tx, mut rx) = channel::<pulsar::ChannelPayload>(channel_buffer_size);
     tokio::spawn(async move {
@@ -48,10 +53,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let pulsar = pulsar::create_pulsar(&addr).await?;
-    let pulsar_namespace = env::var("PULSAR_NAMESPACE")
-        .ok()
-        .unwrap_or_else(|| pulsar_namespace.clone());
-
     consume_loop(
         &pulsar,
         consumer_name,
@@ -61,6 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         opt.batch_size,
         tx,
         debug_topics.as_ref().map(String::as_ref),
+        global_filter_set.as_ref(),
     )
     .await?;
 
