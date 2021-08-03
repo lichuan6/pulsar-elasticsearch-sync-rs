@@ -60,6 +60,10 @@ pub struct Opt {
     #[structopt(long, default_value = "2048")]
     pub channel_buffer_size: usize,
 
+    /// Global filters for pulsar message
+    #[structopt(long)]
+    pub global_filters: Option<Vec<String>>,
+
     /// Elasticsearch address
     #[structopt(short, long, default_value = "http://localhost:9200")]
     pub elasticsearch_addr: String,

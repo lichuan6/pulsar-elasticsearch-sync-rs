@@ -1,5 +1,6 @@
 use crate::pulsar::Data;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+use regex::RegexSet;
 
 pub fn index_and_es_timestamp(
     msg: &pulsar::consumer::Message<Data>,
@@ -32,4 +33,40 @@ pub fn extract_topic_part(topic: &str) -> &str {
     let v: Vec<_> = topic.split('/').collect();
     assert!(v.len() == 5);
     v[4]
+}
+
+// Create a regex::RegexSet from patterns
+pub fn create_regexset(
+    patterns: Option<Vec<String>>,
+) -> Result<Option<RegexSet>, regex::Error> {
+    if let Some(patterns) = patterns {
+        match RegexSet::new(patterns) {
+            Ok(set) => return Ok(Some(set)),
+            Err(e) => {
+                log::info!("create regexset failed: {}", e);
+                return Err(e);
+            }
+        }
+    }
+    Ok(None)
+}
+
+// Create a regex::Regex from pattern
+pub fn create_regex(
+    pattern: Option<String>,
+) -> Result<Option<regex::Regex>, regex::Error> {
+    if let Some(pattern) = pattern {
+        match regex::Regex::new(&pattern) {
+            Ok(r) => return Ok(Some(r)),
+            Err(e) => {
+                log::info!(
+                    "create regex pattern error: {}, source: {}",
+                    e,
+                    pattern,
+                );
+                return Err(e);
+            }
+        }
+    }
+    Ok(None)
 }
