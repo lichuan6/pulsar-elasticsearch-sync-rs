@@ -95,6 +95,8 @@ pub async fn consume_loop(
     )
     .await?;
 
+    log::info!("consumerd created, name: {}, namespace: {}, topic_regex: {}, subscription: {}, namespace_filters: {:?}", name, namespace, topic_regex, subscription_name, namespace_filters);
+
     let debug_topics: HashSet<_> = debug_topics
         .unwrap_or("")
         .split(',')
@@ -119,6 +121,12 @@ pub async fn consume_loop(
 
             // filter messages using namespace_filters
             if let Some(namespace_filters) = namespace_filters {
+                log::debug!(
+                    "checking match namespace filters, namespace: {}, namespace_filters: {:?}, data: {}",
+                    namespace,
+                    namespace_filters,
+                    data
+                );
                 if let Some(regexset) = namespace_filters.get(namespace) {
                     if regexset.is_match(&data) {
                         log::debug!(
