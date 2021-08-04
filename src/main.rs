@@ -1,6 +1,10 @@
 use crate::{es::sink_elasticsearch_loop, pulsar::consume_loop};
 use pulsar_elasticsearch_sync_rs::{
-    args::Opt, es, prometheus::run_metric_server, pulsar, util::create_regexset,
+    args::Opt,
+    es,
+    prometheus::run_metric_server,
+    pulsar,
+    util::{create_namespace_filters, create_regexset},
 };
 use std::env;
 use structopt::StructOpt;
@@ -34,7 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pulsar_namespace = opt.pulsar_namespace;
     let channel_buffer_size = opt.channel_buffer_size;
     let global_filters = opt.global_filters;
+    let namespace_filters = opt.namespace_filters;
     let global_filter_set = create_regexset(global_filters).unwrap_or(None);
+    let namespace_filter_set =
+        create_namespace_filters(namespace_filters).unwrap_or(None);
     let pulsar_namespace = env::var("PULSAR_NAMESPACE")
         .ok()
         .unwrap_or_else(|| pulsar_namespace.clone());
@@ -63,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tx,
         debug_topics.as_ref().map(String::as_ref),
         global_filter_set.as_ref(),
+        namespace_filter_set.as_ref(),
     )
     .await?;
 

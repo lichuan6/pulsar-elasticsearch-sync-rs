@@ -1,4 +1,20 @@
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use structopt::StructOpt;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NamespaceFilter {
+    pub namespace: String,
+    pub filters: Vec<String>,
+}
+
+impl FromStr for NamespaceFilter {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str::<Self>(s)
+            .map_err(|e| format!("parse input error: {}, input: {}", e, s))
+    }
+}
 
 /// A pulsar messages to elasticsearch sync program
 #[derive(StructOpt, Debug)]
@@ -63,6 +79,10 @@ pub struct Opt {
     /// Global filters for pulsar message
     #[structopt(long)]
     pub global_filters: Option<Vec<String>>,
+
+    /// filters for namespaces
+    #[structopt(long)]
+    pub namespace_filters: Option<Vec<NamespaceFilter>>,
 
     /// Elasticsearch address
     #[structopt(short, long, default_value = "http://localhost:9200")]
