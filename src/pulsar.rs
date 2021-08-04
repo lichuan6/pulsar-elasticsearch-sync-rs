@@ -119,25 +119,6 @@ pub async fn consume_loop(
                 continue;
             }
 
-            // filter messages using namespace_filters
-            if let Some(namespace_filters) = namespace_filters {
-                log::debug!(
-                    "checking match namespace filters, namespace: {}, namespace_filters: {:?}, data: {}",
-                    namespace,
-                    namespace_filters,
-                    data
-                );
-                if let Some(regexset) = namespace_filters.get(namespace) {
-                    if regexset.is_match(&data) {
-                        log::debug!(
-                            "data match namespace filters: {}, skip",
-                            data
-                        );
-                        continue;
-                    }
-                }
-            }
-
             // filter messages using global_filters
             if let Some(global_filters) = global_filters {
                 if global_filters.is_match(&data) {
@@ -155,6 +136,19 @@ pub async fn consume_loop(
             if let Some((topic, date_str)) = split_index_and_date_str(&index) {
                 pulsar_received_messages_with_date_inc_by(topic, date_str, 1);
                 pulsar_received_messages_inc_by(topic, 1);
+
+                // filter messages using namespace_filters
+                if let Some(namespace_filters) = namespace_filters {
+                    if let Some(regexset) = namespace_filters.get(topic) {
+                        if regexset.is_match(&data) {
+                            log::debug!(
+                                "data match namespace filters: {}, skip",
+                                data
+                            );
+                            continue;
+                        }
+                    }
+                }
             }
             let payload = (index, es_timestamp, data);
 
