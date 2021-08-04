@@ -1,6 +1,8 @@
+use crate::args::NamespaceFilter;
 use crate::pulsar::Data;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use regex::RegexSet;
+use std::collections::HashMap;
 
 pub fn index_and_es_timestamp(
     msg: &pulsar::consumer::Message<Data>,
@@ -46,6 +48,27 @@ pub fn create_regexset(
                 log::info!("create regexset failed: {}", e);
                 return Err(e);
             }
+        }
+    }
+    Ok(None)
+}
+
+// Create a regex::RegexSet from patterns
+pub fn create_namespace_filters(
+    namespace_filters_vec: Option<Vec<NamespaceFilter>>,
+) -> Result<Option<HashMap<String, RegexSet>>, regex::Error> {
+    if let Some(namespace_filters_vec) = namespace_filters_vec {
+        let mut filters = HashMap::new();
+        for i in namespace_filters_vec {
+            // create regexset for namespace
+            if !i.filters.is_empty() {
+                if let Ok(Some(regexset)) = create_regexset(Some(i.filters)) {
+                    filters.insert(i.namespace, regexset);
+                }
+            }
+        }
+        if !filters.is_empty() {
+            return Ok(Some(filters));
         }
     }
     Ok(None)

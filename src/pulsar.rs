@@ -13,7 +13,12 @@ use pulsar::{
 };
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, env, string::FromUtf8Error, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    string::FromUtf8Error,
+    time::Duration,
+};
 use tokio::sync::mpsc::Sender;
 
 pub type ChannelPayload = (String, String, String);
@@ -78,6 +83,7 @@ pub async fn consume_loop(
     namespace: &str, topic_regex: &str, batch_size: u32,
     tx: Sender<ChannelPayload>, debug_topics: Option<&str>,
     global_filters: Option<&RegexSet>,
+    namespace_filters: Option<&HashMap<String, RegexSet>>,
 ) -> Result<(), pulsar::Error> {
     let mut consumer: Consumer<Data, _> = create_consumer(
         pulsar,
@@ -109,6 +115,19 @@ pub async fn consume_loop(
 
             if data.is_empty() {
                 continue;
+            }
+
+            // filter messages using namespace_filters
+            if let Some(namespace_filters) = namespace_filters {
+                if let Some(regexset) = namespace_filters.get(namespace) {
+                    if regexset.is_match(&data) {
+                        log::debug!(
+                            "data match namespace filters: {}, skip",
+                            data
+                        );
+                        continue;
+                    }
+                }
             }
 
             // filter messages using global_filters
