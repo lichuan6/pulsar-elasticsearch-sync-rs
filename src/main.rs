@@ -30,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!(
         "pulsar elasticsearch sync started, begin to consume messages..."
     );
+    log::info!("command line args: {:?}", opt);
 
     let buffer_size = opt.buffer_size;
     let interval = opt.flush_interval;

@@ -62,7 +62,14 @@ pub fn create_namespace_filters(
         for i in namespace_filters_vec {
             // create regexset for namespace
             if !i.filters.is_empty() {
-                if let Ok(Some(regexset)) = create_regexset(Some(i.filters)) {
+                if let Ok(Some(regexset)) =
+                    create_regexset(Some(i.filters.clone()))
+                {
+                    log::info!(
+                        "creating regexset for namespace {:?} from {:?}",
+                        i.namespace,
+                        i.filters
+                    );
                     filters.insert(i.namespace, regexset);
                 }
             }
