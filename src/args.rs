@@ -84,6 +84,14 @@ pub struct Opt {
     #[structopt(long)]
     pub namespace_filters: Option<Vec<NamespaceFilter>>,
 
+    /// inject key to message, value is uuid string
+    #[structopt(long)]
+    pub inject_key: bool,
+
+    /// injected key name to message
+    #[structopt(long)]
+    pub injected_key_name: Option<String>,
+
     /// Elasticsearch address
     #[structopt(short, long, default_value = "http://localhost:9200")]
     pub elasticsearch_addr: String,

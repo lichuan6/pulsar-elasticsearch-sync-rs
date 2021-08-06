@@ -20,8 +20,16 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc::Sender;
+use uuid::Uuid;
 
-pub type ChannelPayload = (String, String, String);
+#[derive(Debug)]
+pub struct ChannelPayload {
+    pub index: String,
+    pub es_timestamp: String,
+    pub data: String,
+    pub injected_data: Option<String>,
+}
+
 pub type Message<T> = pulsar::consumer::Message<T>;
 
 #[derive(Serialize, Deserialize)]
@@ -83,7 +91,7 @@ pub async fn consume_loop(
     namespace: &str, topic_regex: &str, batch_size: u32,
     tx: Sender<ChannelPayload>, debug_topics: Option<&str>,
     global_filters: Option<&RegexSet>,
-    namespace_filters: Option<&HashMap<String, RegexSet>>,
+    namespace_filters: Option<&HashMap<String, RegexSet>>, inject_key: bool,
 ) -> Result<(), pulsar::Error> {
     let mut consumer: Consumer<Data, _> = create_consumer(
         pulsar,
@@ -150,7 +158,19 @@ pub async fn consume_loop(
                     }
                 }
             }
-            let payload = (index, es_timestamp, data);
+
+            let injected_data = if inject_key {
+                Some(Uuid::new_v4().to_string())
+            } else {
+                None
+            };
+            let payload =
+                ChannelPayload { index, es_timestamp, data, injected_data };
+
+            // show channelpayload when inject_key is true
+            if inject_key {
+                println!("{:?}", payload);
+            }
 
             // Send messages to channel, for sinking to elasticsearch
             let _ = tx.send(payload).await;
