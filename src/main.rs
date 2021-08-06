@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let global_filter_set = create_regexset(global_filters).unwrap_or(None);
     let namespace_filter_set =
         create_namespace_filters(namespace_filters).unwrap_or(None);
+    let inject_key = opt.inject_key;
     let pulsar_namespace = env::var("PULSAR_NAMESPACE")
         .ok()
         .unwrap_or_else(|| pulsar_namespace.clone());
@@ -72,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         debug_topics.as_ref().map(String::as_ref),
         global_filter_set.as_ref(),
         namespace_filter_set.as_ref(),
+        inject_key,
     )
     .await?;
 

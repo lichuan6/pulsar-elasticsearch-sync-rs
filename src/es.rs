@@ -12,64 +12,21 @@ use elasticsearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
     BulkOperation, BulkParts, Elasticsearch, Error,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::Instant;
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc::Receiver;
 use tokio::time;
 use url::Url;
 
-pub fn split_index_and_date_str(s: &str) -> Option<(&str, &str)> {
-    s.rsplit_once('-')
+pub struct BufferMapValue {
+    pub publish_time: String,
+    pub raw_log: String,
+    pub injected_data: Option<String>,
 }
 
-/// Reads messages from pulsar topic and indexes
-/// them into Elasticsearch using the bulk API. An index with explicit mapping
-/// is created for search in other examples.
-// TODO: Concurrent bulk requests
-pub async fn index_json_from_str(
-    client: &Elasticsearch, index: &str, publish_time: &str, data: &[&str],
-) -> Result<(), Error> {
-    let body: Vec<BulkOperation<_>> = data
-        .iter()
-        .filter_map(|p| serde_json::from_str(p).ok())
-        .map(|p: Option<serde_json::Value>| {
-            let p = transform(&p.unwrap(), Some(publish_time), None);
-            BulkOperation::index(p).into()
-        })
-        .collect();
-
-    let error_data: Vec<String> = data
-        .iter()
-        .filter(|p| serde_json::from_str::<serde_json::Value>(p).is_err())
-        .map(|p| p.to_string())
-        .collect();
-
-    log::debug!("serde OK : {}, ERR : {}", body.len(), error_data.len());
-
-    for i in error_data {
-        log::error!("{}", i);
-    }
-
-    let response =
-        client.bulk(BulkParts::Index(index)).body(body).send().await?;
-
-    let json: Value = response.json().await?;
-
-    if json["errors"].as_bool().unwrap_or(false) {
-        let failed_count = json["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|v| !v["error"].is_null())
-            .count();
-
-        // TODO: retry failures
-        log::info!("error : {:?}", json);
-        log::info!("Errors whilst indexing. Failures: {}", failed_count)
-    }
-
-    Ok(())
+pub fn split_index_and_date_str(s: &str) -> Option<(&str, &str)> {
+    s.rsplit_once('-')
 }
 
 fn f64_to_datetime(t: f64) -> DateTime<Utc> {
@@ -132,7 +89,7 @@ fn transform(
 
 pub async fn bulkwrite_and_clear(
     client: &Elasticsearch,
-    buffer_map: &mut HashMap<String, Vec<(String, String)>>,
+    buffer_map: &mut HashMap<String, Vec<BufferMapValue>>,
     time_key: Option<&str>,
 ) {
     for (index, buf) in buffer_map.iter() {
@@ -142,14 +99,17 @@ pub async fn bulkwrite_and_clear(
 }
 
 fn split_buffer<'a, 'b>(
-    buf: &'a [(String, String)], time_key: Option<&'b str>,
+    buf: &'a [BufferMapValue], time_key: Option<&'b str>,
 ) -> (Vec<BulkOperation<serde_json::Value>>, Vec<&'a String>) {
     let mut oks = Vec::new();
     let mut errors = Vec::new();
 
-    for (publish_time, raw_log) in buf.iter() {
+    for BufferMapValue { publish_time, raw_log, injected_data } in buf.iter() {
         if let Ok(log) = serde_json::from_str(raw_log) {
-            let log = transform(&log, Some(publish_time), time_key);
+            let mut log = transform(&log, Some(publish_time), time_key);
+            if let Some(injected_data) = injected_data {
+                log["__INJECTED_DATA__"] = json!(injected_data.clone());
+            }
             oks.push(BulkOperation::index(log).into());
         } else {
             errors.push(raw_log);
@@ -158,8 +118,12 @@ fn split_buffer<'a, 'b>(
     (oks, errors)
 }
 
+/// Reads messages from pulsar topic and indexes
+/// them into Elasticsearch using the bulk API. An index with explicit mapping
+/// is created for search in other examples.
+// TODO: Concurrent bulk requests
 pub async fn bulkwrite(
-    client: &Elasticsearch, index: &str, buf: &[(String, String)],
+    client: &Elasticsearch, index: &str, buf: &[BufferMapValue],
     time_key: Option<&str>,
 ) -> Result<(), Error> {
     let (topic, date_str) = match split_index_and_date_str(index) {
@@ -240,8 +204,8 @@ pub async fn sink_elasticsearch_loop(
     let mut total = 0;
 
     // offload raw logs, and merge same logs belong to specific topic, and bulk write to es
-    // TODO: use HashMap<&str, (&str, &str)> ?
-    let mut buffer_map = HashMap::<String, Vec<(String, String)>>::new();
+    // key is : es index, ie. kube-system-2020.01.01, value is (es_timestamp, data) tuple
+    let mut buffer_map = HashMap::<String, Vec<BufferMapValue>>::new();
 
     // consume messages or timeout
     let mut interval =
@@ -253,9 +217,13 @@ pub async fn sink_elasticsearch_loop(
                  total += 1;
 
                  // save payload to buffer map
-                 let (index, es_timestamp, data) = payload;
+                 let index = payload.index;
+                 let es_timestamp = payload.es_timestamp;
+                 let data = payload.data;
+                 let injected_data = payload.injected_data;
                  let buf = buffer_map.entry(index).or_insert_with(Vec::new);
-                 buf.push((es_timestamp, data));
+                 // buf.push((es_timestamp, data));
+                 buf.push(BufferMapValue{publish_time:es_timestamp, raw_log:data, injected_data});
 
                  // every buffer_size number of logs, sink to elasticsearch
                  if total % buffer_size == 0 {
