@@ -27,7 +27,8 @@ RUN cargo install --path .
 # 2: Copy the exe and extra files ("static") to an empty Docker image
 #FROM scratch
 # FROM alpine:latest
-FROM gcr.io/distroless/cc-debian10
+# FROM gcr.io/distroless/cc-debian10
+FROM gcr.io/distroless/cc-debian10:debug
 COPY --from=builder /usr/local/cargo/bin/pulsar-elasticsearch-sync-rs /pulsar-elasticsearch-sync-rs
 #COPY static .
 # USER 1000
