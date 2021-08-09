@@ -19,7 +19,11 @@ use std::{
     string::FromUtf8Error,
     time::Duration,
 };
-use tokio::sync::mpsc::Sender;
+use tokio::fs::File;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc::Sender; // for write_all()
+
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -28,6 +32,18 @@ pub struct ChannelPayload {
     pub es_timestamp: String,
     pub data: String,
     pub injected_data: Option<String>,
+}
+
+impl std::fmt::Display for ChannelPayload {
+    fn fmt(
+        &self, f: &mut std::fmt::Formatter<'_>,
+    ) -> Result<(), std::fmt::Error> {
+        write!(f, "index: {}, ", self.index)?;
+        write!(f, "es_timestamp: {}, ", self.es_timestamp)?;
+        write!(f, "data: {}, ", self.data)?;
+        writeln!(f, "injected_data: {:?}", self.injected_data)?;
+        Ok(())
+    }
 }
 
 pub type Message<T> = pulsar::consumer::Message<T>;
@@ -86,12 +102,29 @@ pub async fn create_consumer(
         .await?)
 }
 
+/// create a tokio::fs::file, return None if failed
+async fn create_logfile(filename: Option<String>) -> Option<File> {
+    if let Some(filename) = filename {
+        match OpenOptions::new().append(true).create(true).open(filename).await
+        {
+            Ok(file) => return Some(file),
+            Err(err) => {
+                log::info!("Create injected logfile error: {}", err);
+                return None;
+            }
+        }
+    }
+    log::debug!("Create injected_logfile error, reason: injected_logfile argument is None");
+    None
+}
+
 pub async fn consume_loop(
     pulsar: &Pulsar<TokioExecutor>, name: &str, subscription_name: &str,
     namespace: &str, topic_regex: &str, batch_size: u32,
     tx: Sender<ChannelPayload>, debug_topics: Option<&str>,
     global_filters: Option<&RegexSet>,
     namespace_filters: Option<&HashMap<String, RegexSet>>, inject_key: bool,
+    injected_logfile: Option<String>,
 ) -> Result<(), pulsar::Error> {
     let mut consumer: Consumer<Data, _> = create_consumer(
         pulsar,
@@ -102,6 +135,8 @@ pub async fn consume_loop(
         batch_size,
     )
     .await?;
+
+    let mut injected_logfile = create_logfile(injected_logfile).await;
 
     log::info!("consumerd created, name: {}, namespace: {}, topic_regex: {}, subscription: {}, namespace_filters: {:?}", name, namespace, topic_regex, subscription_name, namespace_filters);
 
@@ -169,7 +204,16 @@ pub async fn consume_loop(
 
             // show channelpayload when inject_key is true
             if inject_key {
-                println!("{:?}", payload);
+                if let Some(ref mut injected_logfile) = injected_logfile {
+                    let payload_str = payload.to_string();
+                    let payload = payload_str.as_bytes();
+                    if let Err(err) = injected_logfile.write_all(payload).await
+                    {
+                        log::error!("write channel payload error: {:?}", err);
+                    }
+                } else {
+                    println!("{:?}", payload);
+                }
             }
 
             // Send messages to channel, for sinking to elasticsearch
