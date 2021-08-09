@@ -25,6 +25,7 @@ pub struct BufferMapValue {
     pub injected_data: Option<String>,
 }
 
+/// split str as tuple of (k8snamespace, date_str) i.e (kube-system, 2021.01.01)
 pub fn split_index_and_date_str(s: &str) -> Option<(&str, &str)> {
     s.rsplit_once('-')
 }

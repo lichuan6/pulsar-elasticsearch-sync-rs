@@ -96,6 +96,10 @@ pub struct Opt {
     #[structopt(long)]
     pub injected_logfile: Option<String>,
 
+    /// inject namespaces
+    #[structopt(long)]
+    pub injected_namespaces: Option<String>,
+
     /// Elasticsearch address
     #[structopt(short, long, default_value = "http://localhost:9200")]
     pub elasticsearch_addr: String,

@@ -1,10 +1,9 @@
-use crate::args::NamespaceFilter;
-use crate::pulsar::Data;
+use crate::{args::NamespaceFilter, pulsar::Data};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use regex::RegexSet;
 use std::collections::HashMap;
 
-pub fn index_and_es_timestamp(
+pub fn es_index_and_timestamp(
     msg: &pulsar::consumer::Message<Data>,
 ) -> (String, String) {
     // build es index based on pulsar messages topic and
