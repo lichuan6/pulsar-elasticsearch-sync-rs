@@ -140,7 +140,7 @@ pub async fn bulkwrite(
     let (body, errors) = split_buffer(buf, time_key);
 
     let ok_len = body.len();
-    log::debug!("serde OK : {}", ok_len);
+    log::trace!("serde OK : {}", ok_len);
 
     for i in errors {
         log::error!("{}", i);
@@ -179,7 +179,7 @@ pub async fn bulkwrite(
         format!("{:?}", duration)
     };
 
-    log::debug!("Indexed {} logs in {}", ok_len, taken);
+    log::trace!("Indexed {} logs in {}", ok_len, taken);
 
     elasticsearch_write_success_total(topic, ok_len as u64);
     elasticsearch_write_success_with_date_total(topic, date_str, ok_len as u64);
@@ -235,7 +235,7 @@ pub async fn sink_elasticsearch_loop(
             _ = interval.tick() => {
                 log::debug!("{}ms passed", flush_interval);
                 if !buffer_map.is_empty() {
-                    log::debug!("buffer_map is not emptry, len: {}", buffer_map.len());
+                    log::trace!("buffer_map is not emptry, len: {}", buffer_map.len());
                     bulkwrite_and_clear(client, &mut buffer_map, time_key).await;
                 }
             }

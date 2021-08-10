@@ -264,9 +264,6 @@ pub async fn consume_loop(
                         }
                     }
                 }
-                // } else {
-                //     println!("{:?}", payload);
-                // }
             }
 
             // Send messages to channel, for sinking to elasticsearch
