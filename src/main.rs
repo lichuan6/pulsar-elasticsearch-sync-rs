@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let namespace_filter_set =
         create_namespace_filters(namespace_filters).unwrap_or(None);
     let inject_key = opt.inject_key;
-    let injected_logfile = opt.injected_logfile;
+    let injected_namespaces = opt.injected_namespaces;
     let pulsar_namespace = env::var("PULSAR_NAMESPACE")
         .ok()
         .unwrap_or_else(|| pulsar_namespace.clone());
@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         global_filter_set.as_ref(),
         namespace_filter_set.as_ref(),
         inject_key,
-        injected_logfile,
+        injected_namespaces,
     )
     .await?;
 

@@ -4,8 +4,9 @@ use crate::{
         pulsar_received_messages_inc_by,
         pulsar_received_messages_with_date_inc_by,
     },
-    util::index_and_es_timestamp,
+    util::es_index_and_timestamp,
 };
+use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use pulsar::{
     Authentication, Consumer, ConsumerOptions, DeserializeMessage, Payload,
@@ -19,10 +20,11 @@ use std::{
     string::FromUtf8Error,
     time::Duration,
 };
-use tokio::fs::File;
-use tokio::fs::OpenOptions;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc::Sender; // for write_all()
+use tokio::{
+    fs::{File, OpenOptions},
+    io::AsyncWriteExt,
+    sync::mpsc::Sender,
+}; // for write_all()
 
 use uuid::Uuid;
 
@@ -114,8 +116,40 @@ async fn create_logfile(filename: Option<String>) -> Option<File> {
             }
         }
     }
-    log::debug!("Create injected_logfile error, reason: injected_logfile argument is None");
+    log::debug!(
+        "Create injected_logfile error, reason: injected_logfile argument is \
+         None"
+    );
     None
+}
+
+/// create filters for k8s namespaces
+async fn create_logfiles(filenames: &[&str]) -> HashMap<String, File> {
+    let futs = futures::stream::iter(filenames.iter().map(|filename| {
+        async move {
+            // create file
+            let file = File::create(filename).await;
+            // FIXME: error handling
+            (filename.to_string(), file.unwrap())
+        }
+    }))
+    .buffered(10)
+    .collect::<HashMap<_, _>>();
+    futs.await
+}
+
+/// create a HashMap (key: k8snamespace => value: tokio::fs::file), return None if failed
+async fn create_logfile_map(
+    injected_namespaces: Option<String>,
+) -> Option<HashMap<String, File>> {
+    if let Some(injected_namespaces) = injected_namespaces {
+        let filenames = injected_namespaces.split(',').collect::<Vec<_>>();
+        let logfile_map = create_logfiles(&filenames).await;
+        Some(logfile_map)
+    } else {
+        log::debug!("Create logfiles error: injected_namespace is None");
+        None
+    }
 }
 
 pub async fn consume_loop(
@@ -124,7 +158,7 @@ pub async fn consume_loop(
     tx: Sender<ChannelPayload>, debug_topics: Option<&str>,
     global_filters: Option<&RegexSet>,
     namespace_filters: Option<&HashMap<String, RegexSet>>, inject_key: bool,
-    injected_logfile: Option<String>,
+    injected_namespaces: Option<String>,
 ) -> Result<(), pulsar::Error> {
     let mut consumer: Consumer<Data, _> = create_consumer(
         pulsar,
@@ -136,9 +170,18 @@ pub async fn consume_loop(
     )
     .await?;
 
-    let mut injected_logfile = create_logfile(injected_logfile).await;
+    let mut logfile_map =
+        create_logfile_map(injected_namespaces).await.unwrap_or_default();
 
-    log::info!("consumerd created, name: {}, namespace: {}, topic_regex: {}, subscription: {}, namespace_filters: {:?}", name, namespace, topic_regex, subscription_name, namespace_filters);
+    log::info!(
+        "consumerd created, name: {}, namespace: {}, topic_regex: {}, \
+         subscription: {}, namespace_filters: {:?}",
+        name,
+        namespace,
+        topic_regex,
+        subscription_name,
+        namespace_filters
+    );
 
     let debug_topics: HashSet<_> = debug_topics
         .unwrap_or("")
@@ -159,6 +202,7 @@ pub async fn consume_loop(
             };
 
             if data.is_empty() {
+                log::debug!("empty message topic: {}", msg.topic);
                 continue;
             }
 
@@ -170,7 +214,7 @@ pub async fn consume_loop(
                 }
             }
 
-            let (index, es_timestamp) = index_and_es_timestamp(&msg);
+            let (index, es_timestamp) = es_index_and_timestamp(&msg);
             if !debug_topics.is_empty() && debug_topics.contains(index.as_str())
             {
                 log::info!("Namespace: {}, data: {:?}", index, data);
@@ -199,21 +243,30 @@ pub async fn consume_loop(
             } else {
                 None
             };
-            let payload =
-                ChannelPayload { index, es_timestamp, data, injected_data };
+            let payload = ChannelPayload {
+                index: index.clone(),
+                es_timestamp,
+                data,
+                injected_data,
+            };
 
-            // show channelpayload when inject_key is true
+            // write channelpayload to file when inject_key is true
             if inject_key {
-                if let Some(ref mut injected_logfile) = injected_logfile {
-                    let payload_str = payload.to_string();
-                    let payload = payload_str.as_bytes();
-                    if let Err(err) = injected_logfile.write_all(payload).await
-                    {
-                        log::error!("write channel payload error: {:?}", err);
+                if let Some((namespace, _)) = split_index_and_date_str(&index) {
+                    if let Some(file) = logfile_map.get_mut(namespace) {
+                        let payload_str = payload.to_string();
+                        let payload = payload_str.as_bytes();
+                        if let Err(err) = file.write_all(payload).await {
+                            log::error!(
+                                "write channel payload error: {:?}",
+                                err
+                            );
+                        }
                     }
-                } else {
-                    println!("{:?}", payload);
                 }
+                // } else {
+                //     println!("{:?}", payload);
+                // }
             }
 
             // Send messages to channel, for sinking to elasticsearch
