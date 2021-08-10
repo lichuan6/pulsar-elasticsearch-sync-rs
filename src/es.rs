@@ -94,7 +94,9 @@ pub async fn bulkwrite_and_clear(
     time_key: Option<&str>,
 ) {
     for (index, buf) in buffer_map.iter() {
-        let _ = bulkwrite(client, index, buf, time_key).await;
+        if let Err(err) = bulkwrite(client, index, buf, time_key).await {
+            log::error!("bulkwrite error: {:?}", err);
+        }
     }
     buffer_map.clear();
 }
@@ -223,7 +225,6 @@ pub async fn sink_elasticsearch_loop(
                  let data = payload.data;
                  let injected_data = payload.injected_data;
                  let buf = buffer_map.entry(index).or_insert_with(Vec::new);
-                 // buf.push((es_timestamp, data));
                  buf.push(BufferMapValue{publish_time:es_timestamp, raw_log:data, injected_data});
 
                  // every buffer_size number of logs, sink to elasticsearch
