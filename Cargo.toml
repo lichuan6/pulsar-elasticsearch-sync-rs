@@ -29,5 +29,9 @@ warp = "0.3.1"
 lazy_static = "1.4.0"
 uuid = { version = "0.8.2", features = ["v4"] }
 
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = "0.3.2"
+
 [profile.release]
 lto = true

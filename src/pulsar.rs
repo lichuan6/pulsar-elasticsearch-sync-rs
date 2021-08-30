@@ -20,11 +20,7 @@ use std::{
     string::FromUtf8Error,
     time::Duration,
 };
-use tokio::{
-    fs::{File, OpenOptions},
-    io::AsyncWriteExt,
-    sync::mpsc::Sender,
-}; // for write_all()
+use tokio::{fs::File, io::AsyncWriteExt, sync::mpsc::Sender}; // for write_all()
 
 use uuid::Uuid;
 
@@ -102,25 +98,6 @@ pub async fn create_consumer(
         .with_batch_size(batch_size)
         .build()
         .await?)
-}
-
-/// create a tokio::fs::file, return None if failed
-async fn create_logfile(filename: Option<String>) -> Option<File> {
-    if let Some(filename) = filename {
-        match OpenOptions::new().append(true).create(true).open(filename).await
-        {
-            Ok(file) => return Some(file),
-            Err(err) => {
-                log::info!("Create injected logfile error: {}", err);
-                return None;
-            }
-        }
-    }
-    log::debug!(
-        "Create injected_logfile error, reason: injected_logfile argument is \
-         None"
-    );
-    None
 }
 
 /// create filters for k8s namespaces
