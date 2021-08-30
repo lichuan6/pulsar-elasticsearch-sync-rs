@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 elasticsearch = "7.11.0-alpha.1"
 tokio = { version = "1", features = ["full"] }
-sysinfo = "0.16.4"
+sysinfo = "0.20.1"
 url = "2.2.1"
 clap = "2.33.3"
 http = "0.2.3"
