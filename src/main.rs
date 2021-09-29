@@ -4,9 +4,8 @@ use pulsar_elasticsearch_sync_rs::{
     es,
     prometheus::run_metric_server,
     pulsar,
-    util::{create_namespace_filters, create_regexset},
+    util::{create_namespace_filters, create_regexset, env_or},
 };
-use std::env;
 use structopt::StructOpt;
 use tokio::sync::mpsc::channel;
 
@@ -17,6 +16,12 @@ use jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
+const CONSUMER_NAME: &str = "consumer-pulsar-elasticsearch-sync-rs";
+const SUBSCRIPTION_NAME: &str = "pulsar-elasticsearch-sync-rs";
+const ELASTICSEARCH_ADDRESS: &str = "ELASTICSEARCH_ADDRESS";
+const PULSAR_ADDRESS: &str = "PULSAR_ADDRESS";
+const PULSAR_NAMESPACE: &str = "PULSAR_NAMESPACE";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
@@ -24,19 +29,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_metric_server();
 
     let opt = Opt::from_args();
-    let addr = env::var("PULSAR_ADDRESS")
-        .ok()
-        .unwrap_or_else(|| opt.pulsar_addr.clone());
-    let es_addr = env::var("ELASTICSEARCH_ADDRESS")
-        .ok()
-        .unwrap_or_else(|| opt.elasticsearch_addr.clone());
+    let addr = env_or(PULSAR_ADDRESS, opt.pulsar_addr.clone());
+    let es_addr = env_or(ELASTICSEARCH_ADDRESS, opt.elasticsearch_addr.clone());
     let client = es::create_client(&es_addr).unwrap();
-
-    let consumer_name = "consumer-pulsar-elasticsearch-sync-rs";
-    let subscription_name = "pulsar-elasticsearch-sync-rs";
-    log::info!(
-        "pulsar elasticsearch sync started, begin to consume messages..."
-    );
+    log::info!("pulsar elasticsearch sync started, begin to consume messages");
     log::info!("command line args: {:?}", opt);
 
     let buffer_size = opt.buffer_size;
@@ -52,10 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         create_namespace_filters(namespace_filters).unwrap_or(None);
     let inject_key = opt.inject_key;
     let injected_namespaces = opt.injected_namespaces;
-    let pulsar_namespace = env::var("PULSAR_NAMESPACE")
-        .ok()
-        .unwrap_or_else(|| pulsar_namespace.clone());
-
+    let pulsar_namespace = env_or(PULSAR_NAMESPACE, pulsar_namespace);
     let (tx, mut rx) = channel::<pulsar::ChannelPayload>(channel_buffer_size);
     tokio::spawn(async move {
         // sink log to elasticsearch
@@ -72,8 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pulsar = pulsar::create_pulsar(&addr).await?;
     consume_loop(
         &pulsar,
-        consumer_name,
-        subscription_name,
+        CONSUMER_NAME,
+        SUBSCRIPTION_NAME,
         &pulsar_namespace,
         &opt.topic_regex,
         opt.batch_size,

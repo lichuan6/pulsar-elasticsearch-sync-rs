@@ -2,6 +2,9 @@ use crate::{args::NamespaceFilter, pulsar::Data};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use regex::RegexSet;
 use std::collections::HashMap;
+use std::convert::AsRef;
+use std::env;
+use std::ffi::OsStr;
 
 pub fn es_index_and_timestamp(
     msg: &pulsar::consumer::Message<Data>,
@@ -98,4 +101,21 @@ pub fn create_regex(
         }
     }
     Ok(None)
+}
+
+/// get value from env, if there's no key in env, use the value computed from the closure
+pub fn env_or_else<K, F>(key: K, f: F) -> String
+where
+    K: AsRef<OsStr>,
+    F: FnOnce() -> String,
+{
+    env::var(key).ok().unwrap_or_else(f)
+}
+
+/// get value from env, if there's no key in env, use input value
+pub fn env_or<K>(key: K, value: String) -> String
+where
+    K: AsRef<OsStr>,
+{
+    env::var(key).unwrap_or(value)
 }
