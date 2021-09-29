@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 use structopt::StructOpt;
 
@@ -11,8 +12,27 @@ pub struct NamespaceFilter {
 impl FromStr for NamespaceFilter {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_str::<Self>(s)
-            .map_err(|e| format!("parse input error: {}, input: {}", e, s))
+        serde_json::from_str::<Self>(s).map_err(|e| {
+            format!("parse into NamespaceFilter error: {}, input: {}", e, s)
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct IndicesRewriteRules {
+    /// rules for index rewrite, key is the source pattern, value is the target index
+    /// pattern. i.e ("foo-bar-*", "foo-*") will rewrite index from `foo-bar-*` to `foo-*`
+    pub rules: IndicesRewriteRule,
+}
+
+pub type IndicesRewriteRule = HashMap<String, String>;
+
+impl FromStr for IndicesRewriteRules {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str::<Self>(s).map_err(|e| {
+            format!("parse into IndicesRewriteRules error: {}, input: {}", e, s)
+        })
     }
 }
 
@@ -83,6 +103,10 @@ pub struct Opt {
     /// filters for namespaces
     #[structopt(long)]
     pub namespace_filters: Option<Vec<NamespaceFilter>>,
+
+    /// indices rewrite rule for elasticsearch indices
+    #[structopt(long)]
+    pub indices_rewrite_rules: Option<Vec<NamespaceFilter>>,
 
     /// inject key to message, value is uuid string
     #[structopt(long)]

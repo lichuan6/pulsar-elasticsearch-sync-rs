@@ -26,6 +26,7 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct ChannelPayload {
+    /// index name of elasticsearch
     pub index: String,
     pub es_timestamp: String,
     pub data: String,

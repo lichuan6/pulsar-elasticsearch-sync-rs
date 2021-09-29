@@ -20,7 +20,9 @@ use tokio::time;
 use url::Url;
 
 pub struct BufferMapValue {
+    /// publish time of the pulsar message
     pub publish_time: String,
+    /// pulsar raw message
     pub raw_log: String,
     pub injected_data: Option<String>,
 }
@@ -221,11 +223,12 @@ pub async fn sink_elasticsearch_loop(
 
                  // save payload to buffer map
                  let index = payload.index;
-                 let es_timestamp = payload.es_timestamp;
-                 let data = payload.data;
+                 // rewrite index based on config
+                 let publish_time = payload.es_timestamp;
+                 let raw_log = payload.data;
                  let injected_data = payload.injected_data;
                  let buf = buffer_map.entry(index).or_insert_with(Vec::new);
-                 buf.push(BufferMapValue{publish_time:es_timestamp, raw_log:data, injected_data});
+                 buf.push(BufferMapValue{publish_time, raw_log, injected_data});
 
                  // every buffer_size number of logs, sink to elasticsearch
                  if total % buffer_size == 0 {
@@ -242,6 +245,11 @@ pub async fn sink_elasticsearch_loop(
             }
         }
     }
+}
+
+enum MergePolicy {
+    /// Prefix is a list of prefixes
+    Prefix(Vec<String>),
 }
 
 #[test]
