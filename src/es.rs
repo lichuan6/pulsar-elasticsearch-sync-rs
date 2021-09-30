@@ -13,6 +13,7 @@ use elasticsearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
     BulkOperation, BulkParts, Elasticsearch, Error,
 };
+use regex::RegexSet;
 use serde_json::{json, Value};
 use std::time::Instant;
 use std::{collections::HashMap, time::Duration};
@@ -203,16 +204,53 @@ pub fn create_client(addr: &str) -> Result<Elasticsearch, Error> {
     Ok(Elasticsearch::new(transport))
 }
 
-fn get_rewrite_index() -> String {
-    "".to_string()
+fn build_rules(
+    rules: Option<IndicesRewriteRules>,
+) -> (Option<RegexSet>, Option<Vec<(String, String)>>) {
+    match rules {
+        Some(rules) => {
+            let mut rules_mapping = Vec::new();
+            let patterns =
+                rules.rules.iter().map(|(pat, _)| format!("^{}", pat));
+            let set = RegexSet::new(patterns).unwrap();
+            for (key, value) in rules.rules.into_iter() {
+                rules_mapping.push((key, value));
+            }
+            (Some(set), Some(rules_mapping))
+        }
+        None => (None, None),
+    }
 }
+
+/// first try to match rewrite rules, then get rewrite index from rules_mapping
+fn get_rewrite_index(
+    topic: &str, set: Option<&RegexSet>,
+    rules_mapping: &Option<Vec<(String, String)>>,
+) -> String {
+    if set.is_none() || rules_mapping.is_none() {
+        return topic.into();
+    }
+    let matches: Vec<_> = set.unwrap().matches(topic).into_iter().collect();
+    if matches.is_empty() {
+        // No rewrite rule matched, keep index name as it is
+        return topic.into();
+    }
+
+    // Return the first match, and return rewritten index
+    let matched_index = matches[0];
+    let (_, rule_target) = &rules_mapping.as_ref().unwrap()[matched_index];
+    rule_target.replace(".*", "")
+}
+
 /// Read pulsar messages from Receiver and write theme to elasticsearch
 pub async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
     buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
-    indices_rewrite_rules: Option<Vec<IndicesRewriteRules>>,
+    indices_rewrite_rules: Option<IndicesRewriteRules>,
 ) {
     let mut total = 0;
+
+    let (rules_set, rules_mapping) = build_rules(indices_rewrite_rules);
 
     // offload raw logs, and merge same logs belong to specific topic, and bulk write to es
     // key is es index, ie. kube-system-2020.01.01, value is (publish_time, data) tuple
@@ -228,9 +266,10 @@ pub async fn sink_elasticsearch_loop(
                  total += 1;
 
                  // save payload to buffer map
-                 let index = payload.topic;
+                 let topic = payload.topic;
                  // rewrite index based on config
-                 // TODO: check index match index rewrite rules
+                 let index = get_rewrite_index(&topic, rules_set.as_ref(), &rules_mapping);
+                 let index = format!("{}-{}", &index, &payload.date_str);
 
                  let publish_time = payload.publish_time;
                  let raw_log = payload.data;
@@ -253,11 +292,6 @@ pub async fn sink_elasticsearch_loop(
             }
         }
     }
-}
-
-enum MergePolicy {
-    /// Prefix is a list of prefixes
-    Prefix(Vec<String>),
 }
 
 #[test]

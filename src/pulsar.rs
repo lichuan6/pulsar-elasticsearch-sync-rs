@@ -1,5 +1,4 @@
 use crate::{
-    es::split_index_and_date_str,
     prometheus::{
         pulsar_received_messages_inc_by,
         pulsar_received_messages_with_date_inc_by,
