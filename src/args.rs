@@ -106,7 +106,7 @@ pub struct Opt {
 
     /// indices rewrite rule for elasticsearch indices
     #[structopt(long)]
-    pub indices_rewrite_rules: Option<Vec<NamespaceFilter>>,
+    pub indices_rewrite_rules: Option<Vec<IndicesRewriteRules>>,
 
     /// inject key to message, value is uuid string
     #[structopt(long)]

@@ -1,4 +1,5 @@
 use crate::{
+    args::IndicesRewriteRules,
     prometheus::{
         elasticsearch_write_failed_total,
         elasticsearch_write_failed_with_date_total,
@@ -27,7 +28,8 @@ pub struct BufferMapValue {
     pub injected_data: Option<String>,
 }
 
-/// split str as tuple of (k8snamespace, date_str) i.e (kube-system, 2021.01.01)
+/// Split es index into tuple.
+/// The first element is kubernetes namespace, the second is  date_str. i.e (kube-system, 2021.01.01)
 pub fn split_index_and_date_str(s: &str) -> Option<(&str, &str)> {
     s.rsplit_once('-')
 }
@@ -201,15 +203,19 @@ pub fn create_client(addr: &str) -> Result<Elasticsearch, Error> {
     Ok(Elasticsearch::new(transport))
 }
 
+fn get_rewrite_index() -> String {
+    "".to_string()
+}
 /// Read pulsar messages from Receiver and write theme to elasticsearch
 pub async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
     buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
+    indices_rewrite_rules: Option<Vec<IndicesRewriteRules>>,
 ) {
     let mut total = 0;
 
     // offload raw logs, and merge same logs belong to specific topic, and bulk write to es
-    // key is : es index, ie. kube-system-2020.01.01, value is (es_timestamp, data) tuple
+    // key is es index, ie. kube-system-2020.01.01, value is (publish_time, data) tuple
     let mut buffer_map = HashMap::<String, Vec<BufferMapValue>>::new();
 
     // consume messages or timeout
@@ -222,9 +228,11 @@ pub async fn sink_elasticsearch_loop(
                  total += 1;
 
                  // save payload to buffer map
-                 let index = payload.index;
+                 let index = payload.topic;
                  // rewrite index based on config
-                 let publish_time = payload.es_timestamp;
+                 // TODO: check index match index rewrite rules
+
+                 let publish_time = payload.publish_time;
                  let raw_log = payload.data;
                  let injected_data = payload.injected_data;
                  let buf = buffer_map.entry(index).or_insert_with(Vec::new);

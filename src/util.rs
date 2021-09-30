@@ -19,6 +19,18 @@ pub fn es_index_and_timestamp(
     (index, es_timestamp)
 }
 
+/// topic is used to apply indices rewrite rules
+/// publish_time is used to fill es @timestamp
+/// date_str to generate es index(date part, i.e test-2021.01.01)
+pub fn topic_publish_time_and_date(
+    msg: &pulsar::consumer::Message<Data>,
+) -> (String, String, String) {
+    let topic = extract_topic_part(&msg.topic);
+    let (publish_time, date_str) =
+        publish_timestamp_and_date(msg.metadata().publish_time);
+    (topic.into(), publish_time, date_str)
+}
+
 /// Build message publish time and date
 /// publish_time is the publish time of pulsar message
 /// date can be considered as date part in elasticsearch index
