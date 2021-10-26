@@ -27,7 +27,6 @@ bin/elasticsearch
 
 check elasticsearch is running `curl -s localhost:9200/_cluster/health | jq`:
 
-
 ```json
 {
   "cluster_name": "elasticsearch",

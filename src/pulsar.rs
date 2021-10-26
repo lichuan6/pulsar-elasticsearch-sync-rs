@@ -1,10 +1,9 @@
 use crate::{
-    es::split_index_and_date_str,
     prometheus::{
         pulsar_received_messages_inc_by,
         pulsar_received_messages_with_date_inc_by,
     },
-    util::es_index_and_timestamp,
+    util::topic_publish_time_and_date,
 };
 use futures::stream::StreamExt;
 use futures::TryStreamExt;
@@ -26,8 +25,12 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct ChannelPayload {
-    pub index: String,
-    pub es_timestamp: String,
+    /// pulsar topic name
+    pub topic: String,
+    /// publish_time of pulsar message
+    pub publish_time: String,
+    /// date part in es index. i.e `2020.01.01` in `test-2020.01.01`
+    pub date_str: String,
     pub data: String,
     pub injected_data: Option<String>,
 }
@@ -36,8 +39,8 @@ impl std::fmt::Display for ChannelPayload {
     fn fmt(
         &self, f: &mut std::fmt::Formatter<'_>,
     ) -> Result<(), std::fmt::Error> {
-        write!(f, "index: {}, ", self.index)?;
-        write!(f, "es_timestamp: {}, ", self.es_timestamp)?;
+        write!(f, "topic: {}, ", self.topic)?;
+        write!(f, "date_str: {}, ", self.date_str)?;
         write!(f, "data: {}, ", self.data)?;
         writeln!(f, "injected_data: {:?}", self.injected_data)?;
         Ok(())
@@ -191,26 +194,25 @@ pub async fn consume_loop(
                 }
             }
 
-            let (index, es_timestamp) = es_index_and_timestamp(&msg);
-            if !debug_topics.is_empty() && debug_topics.contains(index.as_str())
+            let (topic, publish_time, date_str) =
+                topic_publish_time_and_date(&msg);
+            if !debug_topics.is_empty() && debug_topics.contains(topic.as_str())
             {
-                log::info!("Namespace: {}, data: {:?}", index, data);
+                log::info!("Namespace: {}, data: {:?}", topic, data);
             }
             // export consumed messages count metrics
-            if let Some((topic, date_str)) = split_index_and_date_str(&index) {
-                pulsar_received_messages_with_date_inc_by(topic, date_str, 1);
-                pulsar_received_messages_inc_by(topic, 1);
+            pulsar_received_messages_with_date_inc_by(&topic, &date_str, 1);
+            pulsar_received_messages_inc_by(&topic, 1);
 
-                // filter messages using namespace_filters
-                if let Some(namespace_filters) = namespace_filters {
-                    if let Some(regexset) = namespace_filters.get(topic) {
-                        if regexset.is_match(&data) {
-                            log::debug!(
-                                "data match namespace filters: {}, skip",
-                                data
-                            );
-                            continue;
-                        }
+            // filter messages using namespace_filters
+            if let Some(namespace_filters) = namespace_filters {
+                if let Some(regexset) = namespace_filters.get(&topic) {
+                    if regexset.is_match(&data) {
+                        log::debug!(
+                            "data match namespace filters: {}, skip",
+                            data
+                        );
+                        continue;
                     }
                 }
             }
@@ -221,24 +223,21 @@ pub async fn consume_loop(
                 None
             };
             let payload = ChannelPayload {
-                index: index.clone(),
-                es_timestamp,
+                topic: topic.clone(),
                 data,
                 injected_data,
+                date_str,
+                publish_time,
             };
 
             // write channelpayload to file when inject_key is true
             if inject_key {
-                if let Some((namespace, _)) = split_index_and_date_str(&index) {
-                    if let Some(file) = logfile_map.get_mut(namespace) {
-                        let payload_str = payload.to_string();
-                        let payload = payload_str.as_bytes();
-                        if let Err(err) = file.write_all(payload).await {
-                            log::error!(
-                                "write channel payload error: {:?}",
-                                err
-                            );
-                        }
+                let namespace = &topic;
+                if let Some(file) = logfile_map.get_mut(namespace) {
+                    let payload_str = payload.to_string();
+                    let payload = payload_str.as_bytes();
+                    if let Err(err) = file.write_all(payload).await {
+                        log::error!("write channel payload error: {:?}", err);
                     }
                 }
             }
