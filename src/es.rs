@@ -204,6 +204,7 @@ pub fn create_client(addr: &str) -> Result<Elasticsearch, Error> {
     Ok(Elasticsearch::new(transport))
 }
 
+/// build rule mappings for es index rewrite based on user's config
 fn build_rules(
     rules: Option<IndicesRewriteRules>,
 ) -> (Option<RegexSet>, Option<Vec<(String, String)>>) {
@@ -222,7 +223,13 @@ fn build_rules(
     }
 }
 
-/// first try to match rewrite rules, then get rewrite index from rules_mapping
+/// Get rewrite index based on user's config
+///
+/// First try to match input pulsar topic with rewrite rules, then get rewrite index from rules_mapping
+///
+/// Currently, only patterns like `a.*` is supported
+///
+/// TODO: return &str instead of String?
 fn get_rewrite_index(
     topic: &str, set: Option<&RegexSet>,
     rules_mapping: &Option<Vec<(String, String)>>,
@@ -242,7 +249,7 @@ fn get_rewrite_index(
     rule_target.replace(".*", "")
 }
 
-/// Read pulsar messages from Receiver and write theme to elasticsearch
+/// Read pulsar messages from Receiver and write to elasticsearch
 pub async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
     buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
@@ -267,7 +274,7 @@ pub async fn sink_elasticsearch_loop(
 
                  // save payload to buffer map
                  let topic = payload.topic;
-                 // rewrite index based on config
+                 // get rewrite index based on user config
                  let index = get_rewrite_index(&topic, rules_set.as_ref(), &rules_mapping);
                  let index = format!("{}-{}", &index, &payload.date_str);
 
@@ -307,4 +314,28 @@ fn trasform_ts_as_time_key() {
     assert!(res["@timestamp"]
         .to_string()
         .starts_with(&format!("\"{}", publish_time)));
+}
+
+#[test]
+fn test_get_rewrite_index() {
+    let rules = vec![("app-biz.*", "app"), ("app-biz1.*", "app")];
+    let rules = rules.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+    let indices_rewrite_rules = Some(IndicesRewriteRules { rules });
+    let (rules_set, rules_mapping) = build_rules(indices_rewrite_rules);
+
+    let topics = vec![
+        ("app-biz", "app"),
+        ("app-biz1", "app"),
+        ("app-biz2", "app"),
+        ("app-foo", "app-foo"),
+        ("kong", "kong"),
+        ("kube-system", "kube-system"),
+        ("logstash", "logstash"),
+    ];
+
+    for (topic, rewrite_index) in topics {
+        let index =
+            get_rewrite_index(&topic, rules_set.as_ref(), &rules_mapping);
+        assert_eq!(index, rewrite_index);
+    }
 }
