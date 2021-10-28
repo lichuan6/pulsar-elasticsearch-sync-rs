@@ -318,7 +318,16 @@ fn trasform_ts_as_time_key() {
 
 #[test]
 fn test_get_rewrite_index() {
-    let rules = vec![("app-biz.*", "app"), ("app-biz1.*", "app")];
+    // {"rules": {"app-.*":"app", "etcd.*": "eks-logstash", "istio-system.*": "eks-logstash", "kube-system.*": "eks-logstash", "kong.*": "eks-logstash"}}
+    let rules = vec![
+        ("app-biz.*", "app"),
+        ("app-biz1.*", "app"),
+        ("app-.*", "app"),
+        ("etcd.*", "eks-logstash"),
+        ("istio-system.*", "eks-logstash"),
+        ("kube-system.*", "eks-logstash"),
+        ("kong.*", "eks-logstash"),
+    ];
     let rules = rules.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
     let indices_rewrite_rules = Some(IndicesRewriteRules { rules });
     let (rules_set, rules_mapping) = build_rules(indices_rewrite_rules);
@@ -327,10 +336,12 @@ fn test_get_rewrite_index() {
         ("app-biz", "app"),
         ("app-biz1", "app"),
         ("app-biz2", "app"),
-        ("app-foo", "app-foo"),
-        ("kong", "kong"),
-        ("kube-system", "kube-system"),
+        ("app-foo", "app"),
         ("logstash", "logstash"),
+        ("etcd", "eks-logstash"),
+        ("kube-system", "eks-logstash"),
+        ("istio-system", "eks-logstash"),
+        ("kong", "eks-logstash"),
     ];
 
     for (topic, rewrite_index) in topics {

@@ -132,6 +132,7 @@ async fn create_logfile_map(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn consume_loop(
     pulsar: &Pulsar<TokioExecutor>, name: &str, subscription_name: &str,
     namespace: &str, topic_regex: &str, batch_size: u32,
