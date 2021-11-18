@@ -79,10 +79,10 @@ pub async fn create_pulsar(
     let pulsar: Pulsar<_> = builder
         .with_connection_retry_options(ConnectionRetryOptions {
             min_backoff: Duration::from_millis(10),
-            max_backoff: Duration::from_secs(30),
+            max_backoff: Duration::from_secs(5),
             max_retries,
             connection_timeout: Duration::from_secs(10),
-            keep_alive: Duration::from_secs(60),
+            keep_alive: Duration::from_secs(10),
         })
         .build()
         .await?;
