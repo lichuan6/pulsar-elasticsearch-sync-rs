@@ -92,6 +92,7 @@ pub async fn create_consumer(
         .with_consumer_name(name)
         .with_subscription_type(SubType::Shared)
         .with_subscription(subscription_name)
+        .with_topic_refresh(Duration::from_secs(2))
         .with_options(ConsumerOptions {
             // get latest messages pulsar::consumer::InitialPosition::Latest, earliest is pulsar::consumer::InitialPosition::Earliest
             initial_position: pulsar::consumer::InitialPosition::Latest,
