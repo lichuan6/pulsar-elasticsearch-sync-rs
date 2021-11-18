@@ -8,8 +8,8 @@ use crate::{
 use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use pulsar::{
-    Authentication, Consumer, ConsumerOptions, DeserializeMessage, Payload,
-    Pulsar, SubType, TokioExecutor,
+    Authentication, ConnectionRetryOptions, Consumer, ConsumerOptions,
+    DeserializeMessage, Payload, Pulsar, SubType, TokioExecutor,
 };
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
@@ -75,7 +75,17 @@ pub async fn create_pulsar(
         builder = builder.with_auth(authentication);
     }
 
-    let pulsar: Pulsar<_> = builder.build().await?;
+    let max_retries = 1000000u32;
+    let pulsar: Pulsar<_> = builder
+        .with_connection_retry_options(ConnectionRetryOptions {
+            min_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_secs(30),
+            max_retries,
+            connection_timeout: Duration::from_secs(10),
+            keep_alive: Duration::from_secs(60),
+        })
+        .build()
+        .await?;
 
     Ok(pulsar)
 }
@@ -92,7 +102,7 @@ pub async fn create_consumer(
         .with_consumer_name(name)
         .with_subscription_type(SubType::Shared)
         .with_subscription(subscription_name)
-        .with_topic_refresh(Duration::from_secs(2))
+        //.with_topic_refresh(Duration::from_secs(2))
         .with_options(ConsumerOptions {
             // get latest messages pulsar::consumer::InitialPosition::Latest, earliest is pulsar::consumer::InitialPosition::Earliest
             initial_position: pulsar::consumer::InitialPosition::Latest,
