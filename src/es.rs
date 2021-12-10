@@ -1,3 +1,5 @@
+use crate::util::is_debug_log;
+use crate::util::is_debug_log_in_json;
 use crate::{
     args::IndicesRewriteRules,
     prometheus::{
@@ -5,9 +7,11 @@ use crate::{
         elasticsearch_write_failed_with_date_total,
         elasticsearch_write_success_total,
         elasticsearch_write_success_with_date_total,
+        pulsar_received_debug_messages_inc_by,
     },
     pulsar::ChannelPayload,
 };
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use elasticsearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
@@ -24,8 +28,11 @@ use url::Url;
 pub struct BufferMapValue {
     /// publish time of the pulsar message
     pub publish_time: String,
+    /// pulsar topic
+    pub topic: String,
     /// pulsar raw message
     pub raw_log: String,
+    /// injected data, ie. UUID, for debug purpose
     pub injected_data: Option<String>,
 }
 
@@ -96,24 +103,38 @@ fn transform(
 pub async fn bulkwrite_and_clear(
     client: &Elasticsearch,
     buffer_map: &mut HashMap<String, Vec<BufferMapValue>>,
-    time_key: Option<&str>,
+    time_key: Option<&str>, debug_log_regexset: Option<&RegexSet>,
 ) {
     for (index, buf) in buffer_map.iter() {
-        if let Err(err) = bulkwrite(client, index, buf, time_key).await {
+        if let Err(err) =
+            bulkwrite(client, index, buf, time_key, debug_log_regexset).await
+        {
             log::error!("bulkwrite error: {:?}", err);
         }
     }
     buffer_map.clear();
 }
 
+// TODO: seperate split functionality with metrics
 fn split_buffer<'a, 'b>(
     buf: &'a [BufferMapValue], time_key: Option<&'b str>,
+    debug_log_regexset: Option<&'a RegexSet>,
 ) -> (Vec<BulkOperation<serde_json::Value>>, Vec<&'a String>) {
     let mut oks = Vec::new();
     let mut errors = Vec::new();
 
-    for BufferMapValue { publish_time, raw_log, injected_data } in buf.iter() {
+    for BufferMapValue { publish_time, raw_log, injected_data, topic } in
+        buf.iter()
+    {
         if let Ok(log) = serde_json::from_str(raw_log) {
+            // increase prometheus counter, when log level is debug, then check raw log using
+            // regexset
+            // TODO: optimize by collect counter under topic and call inc_by only once
+            if is_debug_log_in_json(&log)
+                || is_debug_log(raw_log, debug_log_regexset)
+            {
+                pulsar_received_debug_messages_inc_by(topic, 1);
+            }
             let mut log = transform(&log, Some(publish_time), time_key);
             if let Some(injected_data) = injected_data {
                 log["__INJECTED_DATA__"] = json!(injected_data.clone());
@@ -132,7 +153,7 @@ fn split_buffer<'a, 'b>(
 // TODO: Concurrent bulk requests
 pub async fn bulkwrite(
     client: &Elasticsearch, index: &str, buf: &[BufferMapValue],
-    time_key: Option<&str>,
+    time_key: Option<&str>, debug_log_regexset: Option<&RegexSet>,
 ) -> Result<(), Error> {
     let (topic, date_str) = match split_index_and_date_str(index) {
         Some(v) => v,
@@ -144,7 +165,7 @@ pub async fn bulkwrite(
 
     let now = Instant::now();
     // add publish_time as `@timestamp` to raw log by calling transform
-    let (body, errors) = split_buffer(buf, time_key);
+    let (body, errors) = split_buffer(buf, time_key, debug_log_regexset);
 
     let ok_len = body.len();
     log::trace!("serde OK : {}", ok_len);
@@ -254,6 +275,7 @@ pub async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
     buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
     indices_rewrite_rules: Option<IndicesRewriteRules>,
+    debug_log_regexset: Option<&RegexSet>,
 ) {
     let mut total = 0;
 
@@ -281,20 +303,26 @@ pub async fn sink_elasticsearch_loop(
                  let publish_time = payload.publish_time;
                  let raw_log = payload.data;
                  let injected_data = payload.injected_data;
+
+                 // TODO: regex raw log to check debug log, and increase prometheus counter
+                 // if is_debug_log(&raw_log, debug_log_regexset) {
+                 //     pulsar_received_debug_messages_inc_by(&topic, 1);
+                 // }
+
                  let buf = buffer_map.entry(index).or_insert_with(Vec::new);
-                 buf.push(BufferMapValue{publish_time, raw_log, injected_data});
+                 buf.push(BufferMapValue{publish_time, raw_log, injected_data, topic});
 
                  // every buffer_size number of logs, sink to elasticsearch
                  if total % buffer_size == 0 {
                      // sink and clear map
-                     bulkwrite_and_clear(client, &mut buffer_map, time_key).await;
+                     bulkwrite_and_clear(client, &mut buffer_map, time_key, debug_log_regexset).await;
                  }
             },
             _ = interval.tick() => {
                 log::debug!("{}ms passed", flush_interval);
                 if !buffer_map.is_empty() {
                     log::trace!("buffer_map is not emptry, len: {}", buffer_map.len());
-                    bulkwrite_and_clear(client, &mut buffer_map, time_key).await;
+                    bulkwrite_and_clear(client, &mut buffer_map, time_key, debug_log_regexset).await;
                 }
             }
         }

@@ -50,6 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let injected_namespaces = opt.injected_namespaces;
     let pulsar_namespace = env_or(PULSAR_NAMESPACE, pulsar_namespace);
     let indices_rewrite_rules = opt.indices_rewrite_rules;
+    let debug_log_regexset =
+        create_regexset(opt.debug_log_patterns).unwrap_or(None);
     let (tx, mut rx) = channel::<pulsar::ChannelPayload>(channel_buffer_size);
     tokio::spawn(async move {
         // sink log to elasticsearch
@@ -60,6 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             interval,
             time_key.as_ref().map(String::as_ref),
             indices_rewrite_rules,
+            debug_log_regexset.as_ref(),
         )
         .await;
     });

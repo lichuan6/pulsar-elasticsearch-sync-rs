@@ -135,3 +135,21 @@ where
 {
     env::var(key).unwrap_or(value)
 }
+
+/// Check if raw_log contains debug log, using regexset to do pattern match
+pub fn is_debug_log(raw_log: &str, regexset: Option<&RegexSet>) -> bool {
+    if let Some(regexset) = regexset {
+        if regexset.is_match(raw_log) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if json log contains debug level log, checking if level key exists and value equels to `debug`
+pub fn is_debug_log_in_json(v: &serde_json::Value) -> bool {
+    match v.get("level") {
+        Some(serde_json::Value::String(ref level)) => level == "debug",
+        _ => false,
+    }
+}
