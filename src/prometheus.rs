@@ -15,6 +15,15 @@ lazy_static! {
             &["topic"]
         )
         .expect("metric can be created");
+    pub static ref PULSAR_MESSAGE_CONSUMED_DEBUG_TOTAL: IntCounterVec =
+        IntCounterVec::new(
+            Opts::new(
+                "pulsar_message_consumed_debug_total",
+                "consumed debug messages from pulsar topics"
+            ),
+            &["topic"]
+        )
+        .expect("metric can be created");
     pub static ref ELASTICSEARCH_WRITE_SUCCESS_TOTAL: IntCounterVec =
         IntCounterVec::new(
             Opts::new(
@@ -66,6 +75,10 @@ pub fn pulsar_received_messages_inc_by(topic: &str, v: u64) {
     PULSAR_MESSAGE_CONSUMED_TOTAL.with_label_values(&[topic]).inc_by(v);
 }
 
+pub fn pulsar_received_debug_messages_inc_by(topic: &str, v: u64) {
+    PULSAR_MESSAGE_CONSUMED_DEBUG_TOTAL.with_label_values(&[topic]).inc_by(v);
+}
+
 pub fn elasticsearch_write_success_total(topic: &str, v: u64) {
     ELASTICSEARCH_WRITE_SUCCESS_TOTAL.with_label_values(&[topic]).inc_by(v);
 }
@@ -103,6 +116,9 @@ pub fn elasticsearch_write_failed_with_date_total(
 pub fn register_custom_metrics() {
     REGISTRY
         .register(Box::new(PULSAR_MESSAGE_CONSUMED_TOTAL.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(PULSAR_MESSAGE_CONSUMED_DEBUG_TOTAL.clone()))
         .expect("collector can be registered");
     REGISTRY
         .register(Box::new(ELASTICSEARCH_WRITE_SUCCESS_TOTAL.clone()))

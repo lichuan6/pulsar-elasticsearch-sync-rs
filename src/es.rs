@@ -6,7 +6,7 @@ use crate::{
         elasticsearch_write_success_total,
         elasticsearch_write_success_with_date_total,
     },
-    pulsar::ChannelPayload,
+    pulsar::{pulsar_received_debug_messages_inc_by, ChannelPayload},
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use elasticsearch::{
@@ -24,8 +24,11 @@ use url::Url;
 pub struct BufferMapValue {
     /// publish time of the pulsar message
     pub publish_time: String,
+    /// pulsar topic
+    pub topic: String,
     /// pulsar raw message
     pub raw_log: String,
+    /// injected data, ie. UUID, for debug purpose
     pub injected_data: Option<String>,
 }
 
@@ -111,9 +114,16 @@ fn split_buffer<'a, 'b>(
 ) -> (Vec<BulkOperation<serde_json::Value>>, Vec<&'a String>) {
     let mut oks = Vec::new();
     let mut errors = Vec::new();
+    let mut debug_log = HashMap::new();
 
-    for BufferMapValue { publish_time, raw_log, injected_data } in buf.iter() {
+    for BufferMapValue { publish_time, raw_log, injected_data, topic } in
+        buf.iter()
+    {
         if let Ok(log) = serde_json::from_str(raw_log) {
+            // if level = debug in log, increase prometheus counter
+            if is_debug_log_in_json(&log) {
+                pulsar_received_debug_messages_inc_by(&topic, 1);
+            }
             let mut log = transform(&log, Some(publish_time), time_key);
             if let Some(injected_data) = injected_data {
                 log["__INJECTED_DATA__"] = json!(injected_data.clone());
@@ -281,8 +291,14 @@ pub async fn sink_elasticsearch_loop(
                  let publish_time = payload.publish_time;
                  let raw_log = payload.data;
                  let injected_data = payload.injected_data;
+
+                 // TODO: regex raw log to check debug log, and increase prometheus counter
+                 if is_debug_log(&raw_log) {
+                     pulsar_received_debug_messages_inc_by(&topic, 1);
+                 }
+
                  let buf = buffer_map.entry(index).or_insert_with(Vec::new);
-                 buf.push(BufferMapValue{publish_time, raw_log, injected_data});
+                 buf.push(BufferMapValue{publish_time, raw_log, injected_data, topic});
 
                  // every buffer_size number of logs, sink to elasticsearch
                  if total % buffer_size == 0 {
@@ -298,6 +314,24 @@ pub async fn sink_elasticsearch_loop(
                 }
             }
         }
+    }
+}
+
+fn is_debug_log(raw_log: &str) -> bool {
+    // TODO: use regex to check debug log
+    true
+}
+
+fn is_debug_log_in_json(v: &serde_json::Value) -> bool {
+    match v.get("level") {
+        Some(serde_json::Value::String(ref level)) => {
+            if level == "debug" {
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 

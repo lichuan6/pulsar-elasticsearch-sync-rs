@@ -1,6 +1,6 @@
 use crate::{
     prometheus::{
-        pulsar_received_messages_inc_by,
+        pulsar_received_debug_messages_inc_by, pulsar_received_messages_inc_by,
         pulsar_received_messages_with_date_inc_by,
     },
     util::topic_publish_time_and_date,
@@ -31,6 +31,7 @@ pub struct ChannelPayload {
     pub publish_time: String,
     /// date part in es index. i.e `2020.01.01` in `test-2020.01.01`
     pub date_str: String,
+    /// pulsar raw message
     pub data: String,
     pub injected_data: Option<String>,
 }
@@ -365,6 +366,11 @@ pub async fn consume_loop(
             // export consumed messages count metrics
             pulsar_received_messages_with_date_inc_by(&topic, &date_str, 1);
             pulsar_received_messages_inc_by(&topic, 1);
+
+            // debug log metrics
+            if is_debug_log(&data) {
+                pulsar_received_debug_messages_inc_by(&topic, 1);
+            }
 
             // filter messages using namespace_filters
             if let Some(namespace_filters) = namespace_filters {
