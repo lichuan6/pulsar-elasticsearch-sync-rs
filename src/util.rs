@@ -153,3 +153,18 @@ pub fn is_debug_log_in_json(v: &serde_json::Value) -> bool {
         _ => false,
     }
 }
+
+#[test]
+fn test_is_debug_log() {
+    let debug_log_patterns = vec![r"\[DEBU\]".into(), r"\[Gin-Debug\]".into()];
+    let regexset = create_regexset(Some(debug_log_patterns)).unwrap().unwrap();
+    let logs = vec!["[DEBU]: xxx", "[Gin-Debug]: xxx"];
+    for log in logs {
+        assert!(is_debug_log(log, Some(&regexset)));
+    }
+
+    let logs_notmatch = vec!["DEBU: xxx", "Gin-Debug: xxx"];
+    for log in logs_notmatch {
+        assert!(!is_debug_log(log, Some(&regexset)));
+    }
+}
