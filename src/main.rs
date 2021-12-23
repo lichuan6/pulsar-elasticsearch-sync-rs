@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_metric_server();
 
     let opt = Opt::from_args();
-    let addr = env_or(PULSAR_ADDRESS, opt.pulsar_addr.clone());
+    let pulsar_addr = env_or(PULSAR_ADDRESS, opt.pulsar_addr.clone());
     let es_addr = env_or(ELASTICSEARCH_ADDRESS, opt.elasticsearch_addr.clone());
     let client = es::create_client(&es_addr).unwrap();
     log::info!("pulsar elasticsearch sync started, begin to consume messages");
@@ -67,9 +67,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
     });
 
-    let pulsar = pulsar::create_pulsar(&addr).await?;
     consume_loop(
-        &pulsar,
+        &pulsar_addr,
         CONSUMER_NAME,
         SUBSCRIPTION_NAME,
         &pulsar_namespace,

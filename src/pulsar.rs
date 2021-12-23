@@ -11,6 +11,7 @@ use pulsar::{
     Authentication, ConnectionRetryOptions, Consumer, ConsumerOptions,
     DeserializeMessage, Payload, Pulsar, SubType, TokioExecutor,
 };
+
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,7 +20,12 @@ use std::{
     string::FromUtf8Error,
     time::Duration,
 };
-use tokio::{fs::File, io::AsyncWriteExt, sync::mpsc::Sender}; // for write_all()
+use tokio::{
+    fs::File,
+    io::AsyncWriteExt,
+    sync::mpsc::{self, Sender},
+    time,
+}; // for write_all()
 
 use uuid::Uuid;
 
@@ -146,15 +152,15 @@ async fn create_logfile_map(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn consume_loop(
-    pulsar: &Pulsar<TokioExecutor>, name: &str, subscription_name: &str,
-    namespace: &str, topic_regex: &str, batch_size: u32,
-    tx: Sender<ChannelPayload>, debug_topics: Option<&str>,
-    global_filters: Option<&RegexSet>,
+    url: &str, name: &str, subscription_name: &str, namespace: &str,
+    topic_regex: &str, batch_size: u32, tx: Sender<ChannelPayload>,
+    debug_topics: Option<&str>, global_filters: Option<&RegexSet>,
     namespace_filters: Option<&HashMap<String, RegexSet>>, inject_key: bool,
     injected_namespaces: Option<String>,
 ) -> Result<(), pulsar::Error> {
+    let pulsar = create_pulsar(url).await?;
     let mut consumer: Consumer<Data, _> = create_consumer(
-        pulsar,
+        &pulsar,
         name,
         namespace,
         topic_regex,
@@ -183,110 +189,121 @@ pub async fn consume_loop(
         .into_iter()
         .collect();
 
-    while let Ok(msg) = consumer.try_next().await {
-        if let Some(msg) = msg {
-            consumer.ack(&msg).await?;
-            let data = match msg.deserialize() {
-                Ok(data) => data,
-                Err(e) => {
-                    log::error!("could not deserialize message: {:?}", e);
-                    break;
-                }
-            };
+    let (check_connection_tx, mut check_connection_rx) = mpsc::channel(1);
+    let mut consumer_check_connection = create_consumer(
+        &pulsar,
+        "consumer_check_connection",
+        namespace,
+        topic_regex,
+        "ubscription_check_connection",
+        batch_size,
+    )
+    .await?;
 
-            if data.is_empty() {
-                log::debug!("empty message topic: {}", msg.topic);
-                continue;
-            }
-
-            // filter messages using global_filters
-            if let Some(global_filters) = global_filters {
-                if global_filters.is_match(&data) {
-                    log::debug!("data match global filters: {}, skip", data);
-                    continue;
-                }
-            }
-
-            let (topic, publish_time, date_str) =
-                topic_publish_time_and_date(&msg);
-            if !debug_topics.is_empty() && debug_topics.contains(topic.as_str())
-            {
-                log::info!("Namespace: {}, data: {:?}", topic, data);
-            }
-            // export consumed messages count metrics
-            pulsar_received_messages_with_date_inc_by(&topic, &date_str, 1);
-            pulsar_received_messages_inc_by(&topic, 1);
-
-            // debug log metrics
-            // if is_debug_log(&data) {
-            //     pulsar_received_debug_messages_inc_by(&topic, 1);
-            // }
-
-            // filter messages using namespace_filters
-            if let Some(namespace_filters) = namespace_filters {
-                if let Some(regexset) = namespace_filters.get(&topic) {
-                    if regexset.is_match(&data) {
-                        log::debug!(
-                            "data match namespace filters: {}, skip",
-                            data
-                        );
-                        continue;
+    tokio::spawn(async move {
+        let mut interval = time::interval(Duration::from_millis(1000u64));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if let Err(e) = consumer_check_connection.check_connection().await {
+                        log::error!("check_connection error: {:?}", e);
+                        let _ = check_connection_tx.send(()).await;
                     }
-                }
-            }
-
-            let injected_data = if inject_key {
-                Some(Uuid::new_v4().to_string())
-            } else {
-                None
-            };
-            let payload = ChannelPayload {
-                topic: topic.clone(),
-                data,
-                injected_data,
-                date_str,
-                publish_time,
-            };
-
-            // write channelpayload to file when inject_key is true
-            if inject_key {
-                let namespace = &topic;
-                if let Some(file) = logfile_map.get_mut(namespace) {
-                    let payload_str = payload.to_string();
-                    let payload = payload_str.as_bytes();
-                    if let Err(err) = file.write_all(payload).await {
-                        log::error!("write channel payload error: {:?}", err);
-                    }
-                }
-            }
-
-            // Send messages to channel, for sinking to elasticsearch
-            let _ = tx.send(payload).await;
-        } else {
-            // NOTE: try_next return None if stream is closed, reconnect
-            log::info!("fail to connect to pulsar broker, sleep 10s ...");
-            tokio::time::sleep(Duration::from_secs(10)).await;
-
-            consumer = match create_consumer(
-                pulsar,
-                name,
-                namespace,
-                topic_regex,
-                subscription_name,
-                batch_size,
-            )
-            .await
-            {
-                Ok(consumer) => consumer,
-                Err(e) => {
-                    // sleep and continue
-                    tokio::time::sleep(Duration::from_secs(10)).await;
-                    log::info!("create consumer error : {:?}", e);
-                    continue;
                 }
             }
         }
-    }
+    });
 
-    Ok(())
+    loop {
+        tokio::select! {
+            Ok(msg) = consumer.try_next() => {
+                if let Some(msg) = msg {
+                    consumer.ack(&msg).await?;
+                    let data = match msg.deserialize() {
+                        Ok(data) => data,
+                        Err(e) => {
+                            log::error!("could not deserialize message: {:?}", e);
+                            return Err(pulsar::Error::Custom(e.to_string()));
+                        }
+                    };
+
+                    if data.is_empty() {
+                        log::debug!("empty message topic: {}", msg.topic);
+                        continue;
+                    }
+
+                    // filter messages using global_filters
+                    if let Some(global_filters) = global_filters {
+                        if global_filters.is_match(&data) {
+                            log::debug!("data match global filters: {}, skip", data);
+                            continue;
+                        }
+                    }
+
+                    let (topic, publish_time, date_str) =
+                        topic_publish_time_and_date(&msg);
+                    if !debug_topics.is_empty() && debug_topics.contains(topic.as_str())
+                    {
+                        log::info!("Namespace: {}, data: {:?}", topic, data);
+                    }
+                    // export consumed messages count metrics
+                    pulsar_received_messages_with_date_inc_by(&topic, &date_str, 1);
+                    pulsar_received_messages_inc_by(&topic, 1);
+
+                    // filter messages using namespace_filters
+                    if let Some(namespace_filters) = namespace_filters {
+                        if let Some(regexset) = namespace_filters.get(&topic) {
+                            if regexset.is_match(&data) {
+                                log::debug!(
+                                    "data match namespace filters: {}, skip",
+                                    data
+                                );
+                                continue;
+                            }
+                        }
+                    }
+
+                    let injected_data = if inject_key {
+                        Some(Uuid::new_v4().to_string())
+                    } else {
+                        None
+                    };
+                    let payload = ChannelPayload {
+                        topic: topic.clone(),
+                        data,
+                        injected_data,
+                        date_str,
+                        publish_time,
+                    };
+
+                    // write channelpayload to file when inject_key is true
+                    if inject_key {
+                        let namespace = &topic;
+                        if let Some(file) = logfile_map.get_mut(namespace) {
+                            let payload_str = payload.to_string();
+                            let payload = payload_str.as_bytes();
+                            if let Err(err) = file.write_all(payload).await {
+                                log::error!("write channel payload error: {:?}", err);
+                            }
+                        }
+                    }
+
+                    // Send messages to channel, for sinking to elasticsearch
+                    let _ = tx.send(payload).await;
+                }
+            },
+            Some(_) = check_connection_rx.recv() => {
+                log::info!("connection lost, recreate consumer...");
+                consumer= create_consumer(
+                    &pulsar,
+                    name,
+                    namespace,
+                    topic_regex,
+                    subscription_name,
+                    batch_size,
+                )
+                .await?;
+            }
+        }
+    }
 }
