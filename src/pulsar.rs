@@ -195,7 +195,7 @@ pub async fn consume_loop(
         "consumer_check_connection",
         namespace,
         topic_regex,
-        "ubscription_check_connection",
+        "subscription_check_connection",
         batch_size,
     )
     .await?;
@@ -294,7 +294,7 @@ pub async fn consume_loop(
             },
             Some(_) = check_connection_rx.recv() => {
                 log::info!("connection lost, recreate consumer...");
-                consumer= create_consumer(
+                consumer = create_consumer(
                     &pulsar,
                     name,
                     namespace,
