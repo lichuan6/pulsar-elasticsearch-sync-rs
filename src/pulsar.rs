@@ -8,10 +8,10 @@ use crate::{
 use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use pulsar::{
-    Authentication, ConnectionRetryOptions, Consumer, ConsumerOptions,
-    DeserializeMessage, Payload, Pulsar, SubType, TokioExecutor,
+    proto::command_get_topics_of_namespace::Mode, Authentication,
+    ConnectionRetryOptions, Consumer, ConsumerOptions, DeserializeMessage,
+    Payload, Pulsar, SubType, TokioExecutor,
 };
-
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -189,25 +189,30 @@ pub async fn consume_loop(
         .into_iter()
         .collect();
 
-    let (check_connection_tx, mut check_connection_rx) = mpsc::channel(1);
-    let mut consumer_check_connection = create_consumer(
-        &pulsar,
-        "consumer_check_connection",
-        namespace,
-        topic_regex,
-        "subscription_check_connection",
-        batch_size,
-    )
-    .await?;
-
+    let (check_broker_tx, mut check_broker_rx) = mpsc::channel(100);
+    let ns = namespace.to_string();
+    let pulsar1 = pulsar.clone();
     tokio::spawn(async move {
+        // broker addresses init state
+        let mut init_broker_addresses =
+            match list_broker_addresses(&pulsar1, &ns).await {
+                Ok(broker_addresses) => broker_addresses,
+                Err(e) => {
+                    log::error!("list_broker_addresses error: {:?}", e);
+                    return;
+                }
+            };
         let mut interval = time::interval(Duration::from_millis(1000u64));
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    if let Err(e) = consumer_check_connection.check_connection().await {
-                        log::error!("check_connection error: {:?}", e);
-                        let _ = check_connection_tx.send(()).await;
+                    if let Ok(new_broker_addresses) = list_broker_addresses(&pulsar1, &ns).await {
+                        if !is_hashmap_equal(&init_broker_addresses, &new_broker_addresses) {
+                            log::info!("broker restarted, recreate consumers");
+                            // update init broker addresses
+                            init_broker_addresses = new_broker_addresses;
+                            let _ = check_broker_tx.send(()).await;
+                        }
                     }
                 }
             }
@@ -292,7 +297,7 @@ pub async fn consume_loop(
                     let _ = tx.send(payload).await;
                 }
             },
-            Some(_) = check_connection_rx.recv() => {
+            Some(_) = check_broker_rx.recv() => {
                 log::info!("connection lost, recreate consumer...");
                 consumer = create_consumer(
                     &pulsar,
@@ -303,7 +308,75 @@ pub async fn consume_loop(
                     batch_size,
                 )
                 .await?;
+                log::info!("consumer recreated OK");
             }
         }
     }
+}
+
+/// List all topics(Mode::All) in namespace
+async fn list_topics(
+    pulsar: &Pulsar<TokioExecutor>, namespace: &str,
+) -> Result<Vec<String>, pulsar::Error> {
+    let mode = Mode::All;
+    let namespace = namespace.into();
+    let topics = match pulsar.get_topics_of_namespace(namespace, mode).await {
+        Ok(topics) => topics,
+        Err(err) => {
+            return Err(err);
+        }
+    };
+    Ok(topics)
+}
+
+/// List broker addresses, return hashmap, key is the topic, value is the broker address
+async fn list_broker_addresses(
+    pulsar: &Pulsar<TokioExecutor>, namespace: &str,
+) -> Result<HashMap<String, HashSet<String>>, pulsar::Error> {
+    let topics: Vec<String> = match list_topics(pulsar, namespace).await {
+        Ok(topics) => topics,
+        Err(err) => {
+            return Err(err);
+        }
+    };
+
+    let mut h = HashMap::new();
+    for topic in topics {
+        if let Ok(s) = list_broker_address(pulsar, &topic).await {
+            h.insert(topic, s);
+        }
+    }
+
+    Ok(h)
+}
+
+/// List broker addresses under specified topic
+async fn list_broker_address(
+    pulsar: &Pulsar<TokioExecutor>, topic: &str,
+) -> Result<HashSet<String>, pulsar::Error> {
+    let broker_addresses = pulsar.lookup_partitioned_topic(topic).await?;
+    let mut s = HashSet::new();
+    for broker_address in broker_addresses {
+        let broker_url = &broker_address.1.broker_url;
+        s.insert(broker_url.to_string());
+    }
+    Ok(s)
+}
+
+fn is_hashmap_equal(
+    m1: &HashMap<String, HashSet<String>>,
+    m2: &HashMap<String, HashSet<String>>,
+) -> bool {
+    if m1.len() != m2.len() {
+        return false;
+    }
+    for (k, v) in m1.iter() {
+        if !m2.contains_key(k) {
+            return false;
+        }
+        if v != m2.get(k).unwrap() {
+            return false;
+        }
+    }
+    true
 }
