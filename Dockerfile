@@ -1,5 +1,5 @@
 # 1: Build the exe
-FROM rust:1.53 as builder
+FROM rust:1.57 as builder
 ENV PKG_CONFIG_ALLOW_CROSS=1
 WORKDIR /usr/src
 
