@@ -17,13 +17,19 @@ use elasticsearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
     BulkOperation, BulkParts, Elasticsearch, Error,
 };
-use regex::RegexSet;
+use lazy_static::lazy_static;
+use regex::{Regex, RegexSet};
 use serde_json::{json, Value};
 use std::time::Instant;
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc::Receiver;
 use tokio::time;
 use url::Url;
+
+lazy_static! {
+    static ref RE_PARTITION_TOPIC: Regex =
+        Regex::new(r#"(.*)-partition-(\d+)"#).unwrap();
+}
 
 pub struct BufferMapValue {
     /// publish time of the pulsar message
@@ -255,6 +261,8 @@ fn get_rewrite_index(
     topic: &str, set: Option<&RegexSet>,
     rules_mapping: &Option<Vec<(String, String)>>,
 ) -> String {
+    // topic extraction goes first, then rules matching
+    let topic = extract_pulsar_partition_topic(topic);
     if set.is_none() || rules_mapping.is_none() {
         return topic.into();
     }
@@ -268,6 +276,17 @@ fn get_rewrite_index(
     let matched_index = matches[0];
     let (_, rule_target) = &rules_mapping.as_ref().unwrap()[matched_index];
     rule_target.replace(".*", "")
+}
+
+/// Extrace topic part from pulsar partitioned topic
+/// return input if topic is not a partitioned topic
+fn extract_pulsar_partition_topic(topic: &str) -> &str {
+    if let Some(cap) = RE_PARTITION_TOPIC.captures(topic) {
+        if let Some(topic) = cap.get(1).map(|m| m.as_str()) {
+            return topic;
+        }
+    }
+    topic
 }
 
 /// Read pulsar messages from Receiver and write to elasticsearch
@@ -355,6 +374,7 @@ fn test_get_rewrite_index() {
         ("istio-system.*", "eks-logstash"),
         ("kube-system.*", "eks-logstash"),
         ("kong.*", "eks-logstash"),
+        ("pular.*", "pulsar"),
     ];
     let rules = rules.into_iter().map(|(k, v)| (k.into(), v.into())).collect();
     let indices_rewrite_rules = Some(IndicesRewriteRules { rules });
@@ -370,6 +390,7 @@ fn test_get_rewrite_index() {
         ("kube-system", "eks-logstash"),
         ("istio-system", "eks-logstash"),
         ("kong", "eks-logstash"),
+        ("pulsar-partition-0", "pulsar"),
     ];
 
     for (topic, rewrite_index) in topics {
