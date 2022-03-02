@@ -18,6 +18,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 const CONSUMER_NAME: &str = "consumer-pulsar-elasticsearch-sync-rs";
 const SUBSCRIPTION_NAME: &str = "pulsar-elasticsearch-sync-rs";
+
 const ELASTICSEARCH_ADDRESS: &str = "ELASTICSEARCH_ADDRESS";
 const PULSAR_ADDRESS: &str = "PULSAR_ADDRESS";
 const PULSAR_NAMESPACE: &str = "PULSAR_NAMESPACE";
@@ -52,6 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let indices_rewrite_rules = opt.indices_rewrite_rules;
     let debug_log_regexset =
         create_regexset(opt.debug_log_patterns).unwrap_or(None);
+    let consumer_name = opt.consumer_name.unwrap_or(CONSUMER_NAME.to_string());
+    let subscription_name =
+        opt.subscription_name.unwrap_or(SUBSCRIPTION_NAME.to_string());
     let (tx, mut rx) = channel::<pulsar::ChannelPayload>(channel_buffer_size);
     tokio::spawn(async move {
         // sink log to elasticsearch
@@ -69,8 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     consume_loop(
         &pulsar_addr,
-        CONSUMER_NAME,
-        SUBSCRIPTION_NAME,
+        &consumer_name,
+        &subscription_name,
         &pulsar_namespace,
         &opt.topic_regex,
         opt.batch_size,

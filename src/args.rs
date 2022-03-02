@@ -64,6 +64,14 @@ pub struct Opt {
     #[structopt(short = "n", long, default_value = "public/default")]
     pub pulsar_namespace: String,
 
+    /// Consumer name
+    #[structopt(long)]
+    pub consumer_name: Option<String>,
+
+    /// Subscription name
+    #[structopt(long)]
+    pub subscription_name: Option<String>,
+
     /// Pulsar topic regex
     #[structopt(short = "r", long, default_value = ".*")]
     pub topic_regex: String,
