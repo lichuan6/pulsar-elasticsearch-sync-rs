@@ -99,7 +99,7 @@ fn transform(
             }
 
             for (k, v) in map.iter() {
-                let replaced_key = k.replace(".", "_");
+                let replaced_key = k.replace('.', "_");
                 m.insert(replaced_key, transform(v, None, None));
             }
             serde_json::Value::Object(m)
@@ -112,7 +112,7 @@ pub async fn bulkwrite_and_clear_new(
     client: &Elasticsearch, buffer_map: &mut BufferMap,
 ) {
     for (app, map) in buffer_map.iter() {
-        for (index, buf) in map.into_iter() {
+        for (index, buf) in map.iter() {
             // let response = client
             //     .bulk(BulkParts::Index(index))
             //     .body(buf.to_vec())
@@ -161,7 +161,7 @@ fn body_error_split<'a, 'b>(
     for BufferMapValue { publish_time, raw_log, injected_data, topic } in
         buf.iter()
     {
-        if let Ok(log) = deserialize_raw_log(&raw_log) {
+        if let Ok(log) = deserialize_raw_log(raw_log) {
             // increase prometheus counter, when log level is debug, then check raw log using
             // regexset
             // TODO: optimize by collect counter under topic and call inc_by only once
@@ -188,12 +188,12 @@ fn body_error_split<'a, 'b>(
 // TODO: Concurrent bulk requests
 pub async fn bulkwrite_new(
     client: &Elasticsearch, app: &str, index: &str,
-    body: &Vec<BulkOperation<serde_json::Value>>,
+    body: &[BulkOperation<serde_json::Value>],
 ) -> Result<(), Error> {
     let (topic, date_str) = match split_index_and_date_str(index) {
         Some(v) => v,
         None => {
-            log::info!("bad index format: {}", index);
+            log::info!("bad index format, app: {app}, index: {index}");
             return Ok(());
         }
     };
@@ -209,7 +209,7 @@ pub async fn bulkwrite_new(
     let json: Value = response.json().await?;
 
     if json["errors"].as_bool().unwrap_or(false) {
-        let failed_count = json["items"]
+        let count = json["items"]
             .as_array()
             .unwrap()
             .iter()
@@ -218,12 +218,12 @@ pub async fn bulkwrite_new(
 
         // TODO: retry failures
         log::info!("error : {:?}", json);
-        log::info!("Errors whilst indexing. Failures: {}", failed_count);
-        elasticsearch_write_failed_total(topic, failed_count as u64);
+        log::info!("index error: app: {app}, index: {index} count: {count}",);
+        elasticsearch_write_failed_total(topic, count as u64);
         elasticsearch_write_failed_with_date_total(
             topic,
             date_str,
-            failed_count as u64,
+            count as u64,
         );
     }
 
@@ -458,7 +458,7 @@ fn build_buffer_map(
         {
             pulsar_received_debug_messages_inc_by(topic, 1);
         }
-        let mut log = transform(&log, Some(&publish_time), time_key);
+        let mut log = transform(&log, Some(publish_time), time_key);
         if let Some(injected_data) = injected_data {
             log["__INJECTED_DATA__"] = json!(injected_data.clone());
         }
