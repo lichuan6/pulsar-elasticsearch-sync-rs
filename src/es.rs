@@ -109,30 +109,21 @@ fn transform(
 }
 
 pub async fn bulkwrite_and_clear_new(
-    client: &Elasticsearch, buffer_map: &mut BufferMap, time_key: Option<&str>,
-    debug_log_regexset: Option<&RegexSet>,
+    client: &Elasticsearch, buffer_map: &mut BufferMap,
 ) {
     for (app, map) in buffer_map.iter() {
-        for (index, buf) in map.iter() {
-            if let Err(err) = bulkwrite_new(
-                client,
-                index,
-                buf.to_vec(),
-                time_key,
-                debug_log_regexset,
-            )
-            .await
-            {
-                log::error!("bulkwrite error: {:?}", err);
+        for (index, buf) in map.into_iter() {
+            // let response = client
+            //     .bulk(BulkParts::Index(index))
+            //     .body(buf.to_vec())
+            //     .send()
+            //     .await;
+
+            if let Err(err) = bulkwrite_new(client, app, index, buf).await {
+                log::error!("bulkwrite error: {app}, {index}, {err:?}");
             }
         }
     }
-    //        if let Err(err) =
-    //            bulkwrite(client, index, buf, time_key, debug_log_regexset).await
-    //        {
-    //            log::error!("bulkwrite error: {:?}", err);
-    //        }
-    //    }
     buffer_map.clear();
 }
 
@@ -145,7 +136,7 @@ pub async fn bulkwrite_and_clear(
         if let Err(err) =
             bulkwrite(client, index, buf, time_key, debug_log_regexset).await
         {
-            log::error!("bulkwrite error: {:?}", err);
+            log::error!("bulkwrite error: {err:?}");
         }
     }
     buffer_map.clear();
@@ -196,9 +187,8 @@ fn body_error_split<'a, 'b>(
 /// is created for search in other examples.
 // TODO: Concurrent bulk requests
 pub async fn bulkwrite_new(
-    client: &Elasticsearch, index: &str,
-    body: Vec<BulkOperation<serde_json::Value>>, time_key: Option<&str>,
-    debug_log_regexset: Option<&RegexSet>,
+    client: &Elasticsearch, app: &str, index: &str,
+    body: &Vec<BulkOperation<serde_json::Value>>,
 ) -> Result<(), Error> {
     let (topic, date_str) = match split_index_and_date_str(index) {
         Some(v) => v,
@@ -213,8 +203,8 @@ pub async fn bulkwrite_new(
     let ok_len = body.len();
     log::trace!("serde OK : {}", ok_len);
 
-    let response =
-        client.bulk(BulkParts::Index(index)).body(body).send().await?;
+    let b = body.to_vec();
+    let response = client.bulk(BulkParts::Index(index)).body(b).send().await?;
 
     let json: Value = response.json().await?;
 
@@ -428,14 +418,14 @@ pub async fn sink_elasticsearch_loop(
                 // every buffer_size number of logs, sink to elasticsearch
                 if total % buffer_size == 0 {
                     // sink and clear map
-                    bulkwrite_and_clear_new(client, &mut buffer_map, time_key, debug_log_regexset).await;
+                    bulkwrite_and_clear_new(client, &mut buffer_map).await;
                 }
             },
             _ = interval.tick() => {
                log::debug!("{}ms passed", flush_interval);
                if !buffer_map.is_empty() {
                    log::trace!("buffer_map is not emptry, len: {}", buffer_map.len());
-                     // bulkwrite_and_clear(client, &mut buffer_map, time_key, debug_log_regexset).await;
+                   bulkwrite_and_clear_new(client, &mut buffer_map).await;
                }
             }
         }
