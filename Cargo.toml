@@ -29,6 +29,7 @@ prometheus = { version = "0.12.0", features = ["process"] }
 warp = "0.3.1"
 lazy_static = "1.4.0"
 uuid = { version = "0.8.2", features = ["v4"] }
+anyhow = "1.0.57"
 
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

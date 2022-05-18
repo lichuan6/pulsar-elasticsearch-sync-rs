@@ -39,6 +39,7 @@ pub struct ChannelPayload {
     pub date_str: String,
     /// pulsar raw message
     pub data: String,
+    /// injected data, i.e UUID, for debug purpose
     pub injected_data: Option<String>,
 }
 
