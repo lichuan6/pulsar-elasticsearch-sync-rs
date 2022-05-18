@@ -1,0 +1,13 @@
+---
+
+STACK_VERSION:
+  - 7.x-SNAPSHOT
+
+TEST_SUITE:
+  - free
+  - platinum
+
+RUST_TOOLCHAIN:
+  - latest
+
+exclude: ~

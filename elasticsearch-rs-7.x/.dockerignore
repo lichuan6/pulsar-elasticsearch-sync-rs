@@ -1,0 +1,14 @@
+.git
+.gitignore
+LICENSE.txt
+
+target
+docs
+.vscode
+.idea
+*.iml
+
+api_generator/src/bin
+
+yaml_test_runner/tests
+!yaml_test_runner/tests/common
