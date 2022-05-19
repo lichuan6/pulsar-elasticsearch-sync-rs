@@ -13,7 +13,7 @@ RUN apt-get update && \
 # 1b: Download and compile Rust dependencies (and store as a separate Docker layer)
 RUN USER=root cargo new pulsar-elasticsearch-sync-rs
 WORKDIR /usr/src/pulsar-elasticsearch-sync-rs
-COPY Cargo.toml Cargo.lock ./
+COPY elasticsearch-rs-7.x Cargo.toml Cargo.lock ./
 # RUN cargo install --target x86_64-unknown-linux-musl --path .
 # RUN RUSTFLAGS=-Clinker=musl-gcc cargo install -—release —target=x86_64-unknown-linux-musl --path .
 RUN cargo install --path .
