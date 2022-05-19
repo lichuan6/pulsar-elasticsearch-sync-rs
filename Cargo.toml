@@ -10,7 +10,7 @@ edition = "2018"
 # elasticsearch = "7.11.0-alpha.1"
 elasticsearch = { path = "./elasticsearch-rs-7.x/elasticsearch" }
 tokio = { version = "1", features = ["full"] }
-sysinfo = "0.16.4"
+sysinfo = "0.23.12"
 url = "2.2.1"
 clap = "2.33.3"
 http = "0.2.3"
