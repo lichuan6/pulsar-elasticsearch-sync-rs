@@ -113,12 +113,6 @@ pub async fn bulkwrite_and_clear_new(
 ) {
     for (app, map) in buffer_map.iter() {
         for (index, buf) in map.iter() {
-            // let response = client
-            //     .bulk(BulkParts::Index(index))
-            //     .body(buf.to_vec())
-            //     .send()
-            //     .await;
-
             if let Err(err) = bulkwrite_new(client, app, index, buf).await {
                 log::error!("bulkwrite error: {app}, {index}, {err:?}");
             }
@@ -203,8 +197,8 @@ pub async fn bulkwrite_new(
     let ok_len = body.len();
     log::trace!("serde OK : {}", ok_len);
 
-    let b = body.to_vec();
-    let response = client.bulk(BulkParts::Index(index)).body(b).send().await?;
+    let response =
+        client.bulk(BulkParts::Index(index)).body(body.to_vec()).send().await?;
 
     let json: Value = response.json().await?;
 
@@ -385,11 +379,13 @@ fn extract_pulsar_partition_topic(topic: &str) -> &str {
 /// Here is the main logic of the sinking progress:
 ///
 /// 1) read messages from pulsar topics through channel receiver(sent by consuming loop)
-/// 2) deserialize messages, because we need to group message by `app` key, then to index into elasticsearch in batch
-/// 3) apply rewrite rules to index name
-/// 4) transform messages
-/// 5) transform messages
-/// 6) transform messages
+/// 2) build BufferMap
+///   a) deserialize messages, because we need to group message by `app` key, then to index into elasticsearch in batch
+///   b) apply rewrite rules to index name
+///   c) inject injected_data if provided
+///   d) extract app to group messages by app
+///   e) group messages, fill BufferMap with serde_json::Value
+/// 3) sink data in BufferMap to elasticsearch
 pub async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
     buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
