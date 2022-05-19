@@ -520,7 +520,7 @@ fn test_get_rewrite_index() {
 
     for (topic, rewrite_index) in topics {
         let index =
-            get_rewrite_index(&topic, rules_set.as_ref(), &rules_mapping);
+            get_rewrite_index(topic, rules_set.as_ref(), &rules_mapping);
         assert_eq!(index, rewrite_index);
     }
 }

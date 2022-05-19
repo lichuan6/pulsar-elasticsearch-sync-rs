@@ -102,7 +102,7 @@ pub async fn create_consumer(
     pulsar: &Pulsar<TokioExecutor>, name: &str, namespace: &str,
     topic_regex: &str, subscription_name: &str, batch_size: u32,
 ) -> Result<Consumer<Data, TokioExecutor>, pulsar::Error> {
-    Ok(pulsar
+    pulsar
         .consumer()
         .with_lookup_namespace(namespace)
         .with_topic_regex(Regex::new(topic_regex).unwrap())
@@ -119,7 +119,7 @@ pub async fn create_consumer(
         })
         .with_batch_size(batch_size)
         .build()
-        .await?)
+        .await
 }
 
 /// create filters for k8s namespaces
