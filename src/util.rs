@@ -1,4 +1,5 @@
 use crate::{args::NamespaceFilter, pulsar::Data};
+use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use regex::RegexSet;
 use std::collections::HashMap;
@@ -151,6 +152,14 @@ pub fn is_debug_log_in_json(v: &serde_json::Value) -> bool {
     match v.get("level") {
         Some(serde_json::Value::String(ref level)) => level == "debug",
         _ => false,
+    }
+}
+
+/// Check if json log contains debug level log, checking if level key exists and value equels to `debug`
+pub fn get_app_in_json(v: &serde_json::Value) -> Option<&str> {
+    match v.get("app") {
+        Some(serde_json::Value::String(ref app_value)) => Some(app_value),
+        _ => None,
     }
 }
 

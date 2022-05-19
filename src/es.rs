@@ -1,5 +1,4 @@
-use crate::util::is_debug_log;
-use crate::util::is_debug_log_in_json;
+use crate::util::{get_app_in_json, is_debug_log, is_debug_log_in_json};
 use crate::{
     args::IndicesRewriteRules,
     prometheus::{
@@ -30,6 +29,9 @@ lazy_static! {
     static ref RE_PARTITION_TOPIC: Regex =
         Regex::new(r#"(.*)-partition-(\d+)"#).unwrap();
 }
+
+type BufferMap =
+    HashMap<String, HashMap<String, Vec<BulkOperation<serde_json::Value>>>>;
 
 pub struct BufferMapValue {
     /// publish time of the pulsar message
@@ -97,13 +99,26 @@ fn transform(
             }
 
             for (k, v) in map.iter() {
-                let replaced_key = k.replace(".", "_");
+                let replaced_key = k.replace('.', "_");
                 m.insert(replaced_key, transform(v, None, None));
             }
             serde_json::Value::Object(m)
         }
         _ => value.clone(),
     }
+}
+
+pub async fn bulkwrite_and_clear_new(
+    client: &Elasticsearch, buffer_map: &mut BufferMap,
+) {
+    for (app, map) in buffer_map.iter() {
+        for (index, buf) in map.iter() {
+            if let Err(err) = bulkwrite_new(client, app, index, buf).await {
+                log::error!("bulkwrite error: {app}, {index}, {err:?}");
+            }
+        }
+    }
+    buffer_map.clear();
 }
 
 pub async fn bulkwrite_and_clear(
@@ -115,14 +130,22 @@ pub async fn bulkwrite_and_clear(
         if let Err(err) =
             bulkwrite(client, index, buf, time_key, debug_log_regexset).await
         {
-            log::error!("bulkwrite error: {:?}", err);
+            log::error!("bulkwrite error: {err:?}");
         }
     }
     buffer_map.clear();
 }
 
+fn deserialize_raw_log(raw_log: &str) -> Result<serde_json::Value, Error> {
+    let v: serde_json::Value = serde_json::from_str(raw_log)?;
+    Ok(v)
+}
+
+/// split raw log into elasticsearch document
+/// if raw_log can be deserialized into serde_json::Value, then it will be treated as a valid log
+/// otherwise it will be returned as error, and will be ignored
 // TODO: seperate split functionality with metrics
-fn split_buffer<'a, 'b>(
+fn body_error_split<'a, 'b>(
     buf: &'a [BufferMapValue], time_key: Option<&'b str>,
     debug_log_regexset: Option<&'a RegexSet>,
 ) -> (Vec<BulkOperation<serde_json::Value>>, Vec<&'a String>) {
@@ -132,7 +155,7 @@ fn split_buffer<'a, 'b>(
     for BufferMapValue { publish_time, raw_log, injected_data, topic } in
         buf.iter()
     {
-        if let Ok(log) = serde_json::from_str(raw_log) {
+        if let Ok(log) = deserialize_raw_log(raw_log) {
             // increase prometheus counter, when log level is debug, then check raw log using
             // regexset
             // TODO: optimize by collect counter under topic and call inc_by only once
@@ -157,6 +180,68 @@ fn split_buffer<'a, 'b>(
 /// them into Elasticsearch using the bulk API. An index with explicit mapping
 /// is created for search in other examples.
 // TODO: Concurrent bulk requests
+pub async fn bulkwrite_new(
+    client: &Elasticsearch, app: &str, index: &str,
+    body: &[BulkOperation<serde_json::Value>],
+) -> Result<(), Error> {
+    let (topic, date_str) = match split_index_and_date_str(index) {
+        Some(v) => v,
+        None => {
+            log::info!("bad index format, app: {app}, index: {index}");
+            return Ok(());
+        }
+    };
+
+    let now = Instant::now();
+
+    let ok_len = body.len();
+    log::trace!("serde OK : {}", ok_len);
+
+    let response =
+        client.bulk(BulkParts::Index(index)).body(body.to_vec()).send().await?;
+
+    let json: Value = response.json().await?;
+
+    if json["errors"].as_bool().unwrap_or(false) {
+        let count = json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| !v["error"].is_null())
+            .count();
+
+        // TODO: retry failures
+        log::info!("error : {:?}", json);
+        log::info!("index error: app: {app}, index: {index} count: {count}",);
+        elasticsearch_write_failed_total(topic, count as u64);
+        elasticsearch_write_failed_with_date_total(
+            topic,
+            date_str,
+            count as u64,
+        );
+    }
+
+    let duration = now.elapsed();
+    let secs = duration.as_secs_f64();
+
+    let taken = if secs >= 60f64 {
+        format!("{}m", secs / 60f64)
+    } else {
+        format!("{:?}", duration)
+    };
+
+    log::trace!("Indexed {} logs in {}", ok_len, taken);
+
+    elasticsearch_write_success_total(topic, ok_len as u64);
+    elasticsearch_write_success_with_date_total(topic, date_str, ok_len as u64);
+
+    Ok(())
+}
+
+/// Reads messages from pulsar topic and indexes
+/// them into Elasticsearch using the bulk API. An index with explicit mapping
+/// is created for search in other examples.
+// TODO: Concurrent bulk requests
 pub async fn bulkwrite(
     client: &Elasticsearch, index: &str, buf: &[BufferMapValue],
     time_key: Option<&str>, debug_log_regexset: Option<&RegexSet>,
@@ -171,7 +256,7 @@ pub async fn bulkwrite(
 
     let now = Instant::now();
     // add publish_time as `@timestamp` to raw log by calling transform
-    let (body, errors) = split_buffer(buf, time_key, debug_log_regexset);
+    let (body, errors) = body_error_split(buf, time_key, debug_log_regexset);
 
     let ok_len = body.len();
     log::trace!("serde OK : {}", ok_len);
@@ -290,6 +375,17 @@ fn extract_pulsar_partition_topic(topic: &str) -> &str {
 }
 
 /// Read pulsar messages from Receiver and write to elasticsearch
+///
+/// Here is the main logic of the sinking progress:
+///
+/// 1) read messages from pulsar topics through channel receiver(sent by consuming loop)
+/// 2) build BufferMap
+///   a) deserialize messages, because we need to group message by `app` key, then to index into elasticsearch in batch
+///   b) apply rewrite rules to index name
+///   c) inject injected_data if provided
+///   d) extract app to group messages by app
+///   e) group messages, fill BufferMap with serde_json::Value
+/// 3) sink data in BufferMap to elasticsearch
 pub async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
     buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
@@ -302,7 +398,7 @@ pub async fn sink_elasticsearch_loop(
 
     // offload raw logs, and merge same logs belong to specific topic, and bulk write to es
     // key is es index, ie. kube-system-2020.01.01, value is (publish_time, data) tuple
-    let mut buffer_map = HashMap::<String, Vec<BufferMapValue>>::new();
+    let mut buffer_map = BufferMap::new();
 
     // consume messages or timeout
     let mut interval =
@@ -311,40 +407,65 @@ pub async fn sink_elasticsearch_loop(
     loop {
         tokio::select! {
             Some(payload) = rx.recv() => {
-                 total += 1;
+                total += 1;
 
-                 // save payload to buffer map
-                 let topic = payload.topic;
-                 // get rewrite index based on user config
-                 let index = get_rewrite_index(&topic, rules_set.as_ref(), &rules_mapping);
-                 let index = format!("{}-{}", &index, &payload.date_str);
+                build_buffer_map(&mut buffer_map, &payload, rules_set.as_ref(), &rules_mapping, time_key, debug_log_regexset);
 
-                 let publish_time = payload.publish_time;
-                 let raw_log = payload.data;
-                 let injected_data = payload.injected_data;
-
-                 // TODO: regex raw log to check debug log, and increase prometheus counter
-                 // if is_debug_log(&raw_log, debug_log_regexset) {
-                 //     pulsar_received_debug_messages_inc_by(&topic, 1);
-                 // }
-
-                 let buf = buffer_map.entry(index).or_insert_with(Vec::new);
-                 buf.push(BufferMapValue{publish_time, raw_log, injected_data, topic});
-
-                 // every buffer_size number of logs, sink to elasticsearch
-                 if total % buffer_size == 0 {
-                     // sink and clear map
-                     bulkwrite_and_clear(client, &mut buffer_map, time_key, debug_log_regexset).await;
-                 }
+                // every buffer_size number of logs, sink to elasticsearch
+                if total % buffer_size == 0 {
+                    // sink and clear map
+                    bulkwrite_and_clear_new(client, &mut buffer_map).await;
+                }
             },
             _ = interval.tick() => {
-                log::debug!("{}ms passed", flush_interval);
-                if !buffer_map.is_empty() {
-                    log::trace!("buffer_map is not emptry, len: {}", buffer_map.len());
-                    bulkwrite_and_clear(client, &mut buffer_map, time_key, debug_log_regexset).await;
-                }
+               log::debug!("{}ms passed", flush_interval);
+               if !buffer_map.is_empty() {
+                   log::trace!("buffer_map is not emptry, len: {}", buffer_map.len());
+                   bulkwrite_and_clear_new(client, &mut buffer_map).await;
+               }
             }
         }
+    }
+}
+
+fn build_buffer_map(
+    buffer_map: &mut BufferMap, payload: &ChannelPayload,
+    rules_set: Option<&RegexSet>,
+    rules_mapping: &Option<Vec<(String, String)>>, time_key: Option<&str>,
+    debug_log_regexset: Option<&RegexSet>,
+) {
+    let ChannelPayload {
+        ref topic,
+        ref publish_time,
+        ref date_str,
+        ref data,
+        ref injected_data,
+    } = payload;
+    // get rewrite index based on user config
+    let index = get_rewrite_index(topic, rules_set, rules_mapping);
+    let index = format!("{}-{}", &index, date_str);
+
+    let mut errors = Vec::new();
+
+    if let Ok(log) = deserialize_raw_log(data) {
+        // increase prometheus counter, when log level is debug, then check raw log using regexset
+        // TODO: optimize by collect counter under topic and call inc_by only once
+        if is_debug_log_in_json(&log) || is_debug_log(data, debug_log_regexset)
+        {
+            pulsar_received_debug_messages_inc_by(topic, 1);
+        }
+        let mut log = transform(&log, Some(publish_time), time_key);
+        if let Some(injected_data) = injected_data {
+            log["__INJECTED_DATA__"] = json!(injected_data.clone());
+        }
+
+        // use app key in log, otherwise use default value
+        let app = get_app_in_json(&log).unwrap_or("__DEFAULT_APP__");
+        let map = buffer_map.entry(app.into()).or_insert_with(HashMap::new);
+        let buf = map.entry(index).or_insert_with(Vec::new);
+        buf.push(BulkOperation::index(log).into());
+    } else {
+        errors.push(data);
     }
 }
 
@@ -395,7 +516,7 @@ fn test_get_rewrite_index() {
 
     for (topic, rewrite_index) in topics {
         let index =
-            get_rewrite_index(&topic, rules_set.as_ref(), &rules_mapping);
+            get_rewrite_index(topic, rules_set.as_ref(), &rules_mapping);
         assert_eq!(index, rewrite_index);
     }
 }

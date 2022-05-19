@@ -1,5 +1,5 @@
 # 1: Build the exe
-FROM rust:1.58 as builder
+FROM rust:1.60 as builder
 ENV PKG_CONFIG_ALLOW_CROSS=1
 WORKDIR /usr/src
 
@@ -16,10 +16,11 @@ WORKDIR /usr/src/pulsar-elasticsearch-sync-rs
 COPY Cargo.toml Cargo.lock ./
 # RUN cargo install --target x86_64-unknown-linux-musl --path .
 # RUN RUSTFLAGS=-Clinker=musl-gcc cargo install -—release —target=x86_64-unknown-linux-musl --path .
-RUN cargo install --path .
+#RUN cargo install --path .
 
 # 1c: Build the exe using the actual source code
 COPY src ./src
+COPY elasticsearch-rs-7.x ./elasticsearch-rs-7.x
 # RUN cargo install --target x86_64-unknown-linux-musl --path .
 # RUN RUSTFLAGS=-Clinker=musl-gcc cargo install -—release —target=x86_64-unknown-linux-musl --path .
 RUN cargo install --path .

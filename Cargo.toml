@@ -7,7 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-elasticsearch = "7.11.0-alpha.1"
+# elasticsearch = "7.11.0-alpha.1"
+elasticsearch = { path = "./elasticsearch-rs-7.x/elasticsearch" }
 tokio = { version = "1", features = ["full"] }
 sysinfo = "0.16.4"
 url = "2.2.1"
@@ -29,6 +30,7 @@ prometheus = { version = "0.12.0", features = ["process"] }
 warp = "0.3.1"
 lazy_static = "1.4.0"
 uuid = { version = "0.8.2", features = ["v4"] }
+anyhow = "1.0.57"
 
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
