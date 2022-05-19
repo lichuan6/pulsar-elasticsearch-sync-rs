@@ -28,9 +28,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.52"
+version = "1.0.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84450d0b4a8bd1ba4144ce8ce718fbc5d071358b1e5384bace6536b3d1f2d5b3"
+checksum = "08f9b8508dccb7687a1d6c4ce66b2b0ecef467c94667de27d8d7fe1f8d2a9cdc"
 
 [[package]]
 name = "async-attributes"
@@ -533,13 +533,12 @@ checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
 
 [[package]]
 name = "elasticsearch"
-version = "7.11.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c56ed5adbc4f665685356405132107c35f905b02f3d429814c680f134f8e8edd"
+version = "7.15.0-alpha.1"
 dependencies = [
  "base64 0.11.0",
  "bytes",
  "dyn-clone",
+ "lazy_static",
  "percent-encoding",
  "reqwest",
  "rustc_version",
@@ -1595,6 +1594,7 @@ dependencies = [
 name = "pulsar-elasticsearch-sync-rs"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "elasticsearch",

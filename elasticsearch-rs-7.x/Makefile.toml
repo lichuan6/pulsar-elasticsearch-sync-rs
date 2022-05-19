@@ -1,0 +1,353 @@
+[config]
+default_to_workspace = false
+
+[env]
+# Determines the version of Elasticsearch docker container used
+STACK_VERSION = { value = "7.x-SNAPSHOT", condition = { env_not_set = ["STACK_VERSION"] }}
+# Determines the distribution of docker container used. Either platinum or free
+TEST_SUITE = { value = "free", condition = { env_not_set = ["TEST_SUITE"] }}
+# Set publish flags to dry-run by default, to force user to explicitly define for publishing
+CARGO_MAKE_CARGO_PUBLISH_FLAGS = { value = "--dry-run", condition = { env_not_set = ["CARGO_MAKE_CARGO_PUBLISH_FLAGS"] }}
+# RUST_BACKTRACE is set to "full" in cargo make's builtin makefiles/stable.toml
+RUST_BACKTRACE = { value = "0", condition = { env_not_set = ["RUST_BACKTRACE"]}}
+
+[tasks.set-free-env]
+category = "Elasticsearch"
+description = "Sets ELASTICSEARCH_URL environment variable if not already set for later tasks when free test suite used"
+private = true
+condition = { env = { "TEST_SUITE" = "free" }, env_not_set = ["ELASTICSEARCH_URL"] }
+env = { "ELASTICSEARCH_URL" = "http://elastic:changeme@localhost:9200" }
+
+[tasks.set-platinum-env]
+category = "Elasticsearch"
+description = "Sets ELASTICSEARCH_URL environment variable if not already set for later tasks when platinum test suite used"
+private = true
+condition = { env = { "TEST_SUITE" = "platinum" }, env_not_set = ["ELASTICSEARCH_URL"] }
+env = { "ELASTICSEARCH_URL" = "https://elastic:changeme@localhost:9200" }
+
+[tasks.download-specs]
+category = "Elasticsearch"
+description = '''Download Rest API specs and YAML tests'''
+private = true
+command = "cargo"
+# cargo-make insists on installing cargo-xtask and ignores .cargo/config.toml
+#args = ["xtask", "download-specs", "--url", "${ELASTICSEARCH_URL}"]
+args = ["run", "-q", "-p", "xtask", "--", "download-specs", "--url", "${ELASTICSEARCH_URL}"]
+dependencies = ["start-elasticsearch"]
+
+[tasks.run-yaml-test-runner]
+category = "Elasticsearch"
+description = '''
+Runs yaml_test_runner package to generate tests from yaml files for a given Elasticsearch commit.
+The commit to use is retrieved from the running Elasticsearch instance
+'''
+private = true
+command = "cargo"
+args = ["run", "-p", "yaml_test_runner", "--", "-u", "${ELASTICSEARCH_URL}"]
+dependencies = ["download-specs"]
+
+[tasks.test-yaml-test-runner]
+category = "Elasticsearch"
+private = true
+condition = { env_set = [ "ELASTICSEARCH_URL" ], env_false = ["CARGO_MAKE_CI"] }
+command = "cargo"
+args = ["test", "-p", "yaml_test_runner", "--", "--test-threads", "1"]
+dependencies = ["generate-yaml-tests"]
+
+[tasks.test-yaml-test-runner-ci]
+category = "Elasticsearch"
+private = true
+condition = { env_set = [ "ELASTICSEARCH_URL" ], env_true = ["CARGO_MAKE_CI"] }
+script = ["cargo test -p yaml_test_runner -- --test-threads 1 -Z unstable-options --format json | tee test_results/results.json"]
+dependencies = ["generate-yaml-tests"]
+
+[tasks.test-elasticsearch]
+category = "Elasticsearch"
+private = true
+condition = { env_set = [ "ELASTICSEARCH_URL" ], env = { "TEST_SUITE" = "platinum" } }
+command = "cargo"
+args = ["test", "-p", "elasticsearch"]
+dependencies = ["start-elasticsearch"]
+
+[tasks.run-api-generator]
+category = "Elasticsearch"
+private = true
+command = "cargo"
+args = ["run", "-p", "api_generator"]
+dependencies = ["download-specs"]
+
+[tasks.create-test-results-dir]
+category = "Elasticsearch"
+private = true
+condition = { env_true = [ "CARGO_MAKE_CI" ] }
+script = ["[ -d test_results ] || mkdir -p test_results"]
+
+[tasks.install-cargo2junit]
+category = "Elasticsearch"
+private = true
+script = ["cargo install cargo2junit"]
+
+[tasks.convert-test-results-junit]
+category = "Elasticsearch"
+private = true
+condition = { env_true = [ "CARGO_MAKE_CI" ] }
+script = ["cat test_results/results.json | cargo2junit > test_results/cargo-junit.xml"]
+dependencies = ["install-cargo2junit"]
+
+[tasks.run-elasticsearch]
+category = "Elasticsearch"
+private = true
+condition = { env_set = [ "STACK_VERSION", "TEST_SUITE" ], env_false = ["CARGO_MAKE_CI"] }
+dependencies = ["set-free-env", "set-platinum-env"]
+
+[tasks.run-elasticsearch.linux]
+command = "./.ci/run-elasticsearch.sh"
+
+[tasks.run-elasticsearch.mac]
+command = "./.ci/run-elasticsearch.sh"
+
+[tasks.run-elasticsearch.windows]
+script_runner = "cmd"
+script = [
+'''
+bash -c "STACK_VERSION=%STACK_VERSION% TEST_SUITE=%TEST_SUITE% DETACH=%DETACH% CLEANUP=%CLEANUP% bash .ci/run-elasticsearch.sh"
+'''
+]
+
+[tasks.publish-elasticsearch]
+description = "Runs the cargo publish command."
+category = "Elasticsearch"
+private = true
+script_runner = "@duckscript"
+script = [
+"""
+cd elasticsearch
+echo "publishing elasticsearch crate: cargo publish %{CARGO_MAKE_CARGO_PUBLISH_FLAGS}"
+if is_empty %{CARGO_MAKE_CARGO_PUBLISH_FLAGS}
+    exec cargo publish
+else
+    exec cargo publish %{CARGO_MAKE_CARGO_PUBLISH_FLAGS}
+end
+"""
+]
+
+# ============
+# Public tasks
+# ============
+
+[tasks.start-elasticsearch]
+extend = "run-elasticsearch"
+private = false
+description = "Starts Elasticsearch docker container with the given version and distribution"
+env = { "CLEANUP" = false, "DETACH" = true }
+
+[tasks.stop-elasticsearch]
+extend = "run-elasticsearch"
+private = false
+description = "Stops Elasticsearch docker container, if running"
+env = { "CLEANUP" = true, "DETACH" = false }
+
+[tasks.test-yaml]
+category = "Elasticsearch"
+description = "Generates and runs yaml_test_runner package platinum/free tests against a given Elasticsearch version"
+condition = { env_set = [ "STACK_VERSION", "TEST_SUITE" ] }
+dependencies = ["generate-yaml-tests", "create-test-results-dir", "test-yaml-test-runner", "test-yaml-test-runner-ci", "convert-test-results-junit"]
+run_task = "stop-elasticsearch"
+
+[tasks.test-generator]
+category = "Elasticsearch"
+clear = true
+description = "Runs api_generator tests"
+command = "cargo"
+args = ["test", "-p", "api_generator"]
+
+[tasks.test]
+category = "Elasticsearch"
+clear = true
+description = "Runs elasticsearch package tests against a given Elasticsearch version"
+env = { "TEST_SUITE" = { value = "platinum", condition = { env_set = ["TEST_SUITE"] } } }
+dependencies = ["test-elasticsearch"]
+run_task = "stop-elasticsearch"
+
+[tasks.generate-yaml-tests]
+category = "Elasticsearch"
+description = "Generates Elasticsearch client tests from YAML tests"
+dependencies = ["run-yaml-test-runner"]
+run_task = "format"
+
+[tasks.generate-api]
+category = "Elasticsearch"
+description = "Generates Elasticsearch client from REST API specs"
+dependencies = ["run-api-generator"]
+run_task = "format"
+
+[tasks.docs]
+description = "Generate Elasticsearch client documentation and opens in browser"
+clear = true
+category = "Elasticsearch"
+command = "cargo"
+args = ["doc", "-p", "elasticsearch", "--no-deps", "--open", "--all-features"]
+
+[tasks.generate-release-notes]
+category = "Elasticsearch"
+description = """
+Generates release notes for Elasticsearch client using a common release notes generator docker image.
+Assumes the clients-team repo is checked out as a sibling directory of elasticsearch-rs
+"""
+condition = { env_set = ["OLD_VERSION", "NEW_VERSION"], files_exist = [ "${CARGO_MAKE_WORKING_DIRECTORY}/../clients-team/scripts/release-notes-generator/Dockerfile" ] }
+script_runner = "@shell"
+script = [
+"""
+cd ./../clients-team/scripts/release-notes-generator
+docker build --file ./Dockerfile --tag clients-team/release_notes_generator .
+docker run -v "${CARGO_MAKE_WORKING_DIRECTORY}/.ci/release/config.yml:/usr/src/release_notes_generator/config.yml" --rm clients-team/release_notes_generator -o ${OLD_VERSION} -n ${NEW_VERSION}
+"""
+]
+
+[tasks.publish]
+clear = true
+dependencies = [ "publish-elasticsearch" ]
+run_task = "generate-release-notes"
+
+[tasks.package]
+clear = true
+description = "Runs the cargo package command for elasticsearch crate."
+category = "Elasticsearch"
+script_runner = "@duckscript"
+script = [
+"""
+cd elasticsearch
+echo "packaging elasticsearch crate: cargo package %{CARGO_MAKE_CARGO_PACKAGE_FLAGS}"
+if is_empty %{CARGO_MAKE_CARGO_PACKAGE_FLAGS}
+    exec cargo package
+else
+    exec cargo package %{CARGO_MAKE_CARGO_PACKAGE_FLAGS}
+end
+"""
+]
+
+[tasks.update-version]
+description = "Updates the package versions and version in docs"
+condition = { env_set = ["NEW_VERSION"] }
+script_runner = "@rust"
+script = '''
+//! ```cargo
+//! [dependencies]
+//! envmnt = "*"
+//! glob = "0.3.0"
+//! semver = "0.11.0"
+//! toml_edit = "0.2.0"
+//! ```
+extern crate glob;
+extern crate semver;
+
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::Path;
+use glob::glob;
+use semver::Version;
+fn main() {
+    let new_version = {
+        let v = envmnt::get_or_panic("NEW_VERSION");
+        v.parse::<Version>().expect("NEW_VERSION must be a valid semantic version")
+    };
+    let old_version = update_cargo_toml(&new_version);
+    update_docs(&old_version, &new_version);
+}
+
+fn update_docs(old_version: &str, new_version: &Version) {
+    for entry in glob("docs/*.asciidoc").unwrap()
+        .chain(glob("README.md").unwrap())
+        .chain(glob("elasticsearch/src/lib.rs").unwrap()) {
+        match entry {
+            Ok(path) => {
+                let mut content = read_file(&path);
+                content = content.replace(
+                    &format!("elasticsearch = \"{}\"", old_version),
+                    &format!("elasticsearch = \"{}\"", new_version.to_string()));
+                write_file(&path, content);
+            }
+            Err(e) => panic!("{:?}", e),
+        }
+    }
+}
+
+fn update_cargo_toml(new_version: &Version) -> String {
+    let mut old_version = String::new();
+    for entry in glob("**/Cargo.toml").unwrap() {
+        match entry {
+            Ok(path) => {
+                // skip workspace and target tomls
+                if path.starts_with("target") || path.to_string_lossy() == "Cargo.toml" {
+                    continue;
+                }
+
+                let content = read_file(&path);
+                let mut toml = content.parse::<toml_edit::Document>().expect("Could not parse Cargo.toml");
+                let name = toml["package"]["name"].as_str().expect("toml has name");
+
+                // store the version from the elasticsearch package to target replacement in docs
+                if name == "elasticsearch" {
+                    old_version = toml["package"]["version"]
+                        .as_str()
+                        .expect("toml has version")
+                        .to_string();
+                }
+
+                toml["package"]["version"] = toml_edit::value(new_version.to_string());
+                write_file(&path, toml.to_string());
+            },
+            Err(e) => panic!("{:?}", e),
+        }
+    }
+    old_version
+}
+
+fn read_file<P: AsRef<Path>>(path: P) -> String {
+    let mut file = File::open(path).unwrap();
+    let mut raw_data = String::new();
+    file.read_to_string(&mut raw_data).unwrap();
+    raw_data
+}
+
+fn write_file<P: AsRef<Path>>(path: P, content: String) {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .unwrap();
+    file.write_all(content.as_bytes()).unwrap();
+}
+'''
+
+[tasks.default]
+clear = true
+script_runner = "@duckscript"
+script = ['''
+    echo
+    echo Main tasks:
+    echo - generate-api: Generates Elasticsearch client from REST API specs
+    echo - start-elasticsearch: Starts Elasticsearch docker container with the given version and distribution
+    echo - stop-elasticsearch: Stops Elasticsearch docker container, if running
+    echo
+    echo - test-yaml: Generates and runs yaml_test_runner package platinum/free tests against a given Elasticsearch version
+    echo - test-generator: Generates and runs api_generator package tests
+    echo - test: Runs elasticsearch package tests against a given Elasticsearch version
+    echo
+    echo - update-version: Updates the version
+    echo       pass NEW_VERSION environment variable for version
+    echo - generate-release-notes: Generates release notes for elasticsearch crate.
+    echo       pass OLD_VERSION and NEW_VERSION environment variables to match release version GitHub labels e.g. v7.9.0-alpha.1
+    echo - package: Packages the elasticsearch crate.
+    echo       package flags can be overridden with CARGO_MAKE_CARGO_PACKAGE_FLAGS environment variable
+    echo - publish: Publishes the elasticsearch crate.
+    echo       By default, peforms a dry run by passing --dry-run, but publish flags can be overridden with CARGO_MAKE_CARGO_PUBLISH_FLAGS environment variable
+    echo
+    echo Most tasks use these environment variables:
+    echo - STACK_VERSION (default '${STACK_VERSION}'): the version of Elasticsearch
+    echo - TEST_SUITE ('free' or 'platinum', default '${TEST_SUITE}'): the distribution of Elasticsearch
+    echo - CI (default not set): set when running on CI to determine whether to start Elasticsearch and format test output as JSON
+    echo
+    echo Run 'cargo make --list-all-steps' for a complete list of available tasks.
+    echo
+''']

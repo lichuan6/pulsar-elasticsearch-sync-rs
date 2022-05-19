@@ -1,0 +1,32 @@
+# Use rust latest stable along with
+# - openssl, libssl-dev and pkg-config packages to compile native-tls
+# - cargo make and cargo2junit
+ARG RUST_TOOLCHAIN=latest
+
+FROM rust:${RUST_TOOLCHAIN}
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        openssl \
+        libssl-dev \
+        pkg-config \
+        ; \
+    cargo install --force cargo-make; \
+    cargo install cargo2junit;
+
+# create app directory
+WORKDIR /usr/src/elasticsearch-rs
+
+COPY .ci/certs ./.ci/certs
+COPY Cargo.toml ./Cargo.toml
+COPY Makefile.toml ./Makefile.toml
+COPY README.md ./README.md
+COPY api_generator ./api_generator
+COPY elasticsearch/Cargo.toml ./elasticsearch/Cargo.toml
+COPY elasticsearch/src ./elasticsearch/src
+COPY elasticsearch/build.rs ./elasticsearch/build.rs
+COPY yaml_test_runner ./yaml_test_runner
+COPY xtask ./xtask
+
+RUN cargo build --tests
