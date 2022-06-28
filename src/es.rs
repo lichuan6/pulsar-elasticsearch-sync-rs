@@ -1,8 +1,10 @@
-use crate::util::{get_app_in_json, is_debug_log, is_debug_log_in_json};
+use crate::util::{
+    get_app_in_json, get_key_len, is_debug_log, is_debug_log_in_json,
+};
 use crate::{
     args::IndicesRewriteRules,
     prometheus::{
-        elasticsearch_write_failed_total,
+        elasticsearch_index_field_count, elasticsearch_write_failed_total,
         elasticsearch_write_failed_with_date_total,
         elasticsearch_write_success_total,
         elasticsearch_write_success_with_date_total,
@@ -123,59 +125,9 @@ pub async fn bulkwrite_and_clear_new(
     buffer_map.clear();
 }
 
-pub async fn bulkwrite_and_clear(
-    client: &Elasticsearch,
-    buffer_map: &mut HashMap<String, Vec<BufferMapValue>>,
-    time_key: Option<&str>, debug_log_regexset: Option<&RegexSet>,
-) {
-    for (index, buf) in buffer_map.iter() {
-        if let Err(err) =
-            bulkwrite(client, index, buf, time_key, debug_log_regexset).await
-        {
-            log::error!("bulkwrite error: {err:?}");
-        }
-    }
-    buffer_map.clear();
-}
-
 fn deserialize_raw_log(raw_log: &str) -> Result<serde_json::Value, Error> {
     let v: serde_json::Value = serde_json::from_str(raw_log)?;
     Ok(v)
-}
-
-/// split raw log into elasticsearch document
-/// if raw_log can be deserialized into serde_json::Value, then it will be treated as a valid log
-/// otherwise it will be returned as error, and will be ignored
-// TODO: seperate split functionality with metrics
-fn body_error_split<'a, 'b>(
-    buf: &'a [BufferMapValue], time_key: Option<&'b str>,
-    debug_log_regexset: Option<&'a RegexSet>,
-) -> (Vec<BulkOperation<serde_json::Value>>, Vec<&'a String>) {
-    let mut oks = Vec::new();
-    let mut errors = Vec::new();
-
-    for BufferMapValue { publish_time, raw_log, injected_data, topic } in
-        buf.iter()
-    {
-        if let Ok(log) = deserialize_raw_log(raw_log) {
-            // increase prometheus counter, when log level is debug, then check raw log using
-            // regexset
-            // TODO: optimize by collect counter under topic and call inc_by only once
-            if is_debug_log_in_json(&log)
-                || is_debug_log(raw_log, debug_log_regexset)
-            {
-                pulsar_received_debug_messages_inc_by(topic, 1);
-            }
-            let mut log = transform(&log, Some(publish_time), time_key);
-            if let Some(injected_data) = injected_data {
-                log["__INJECTED_DATA__"] = json!(injected_data.clone());
-            }
-            oks.push(BulkOperation::index(log).into());
-        } else {
-            errors.push(raw_log);
-        }
-    }
-    (oks, errors)
 }
 
 /// Reads messages from pulsar topic and indexes
@@ -202,6 +154,8 @@ pub async fn bulkwrite_new(
     let response =
         client.bulk(BulkParts::Index(index)).body(body.to_vec()).send().await?;
 
+    // calculate avg field count
+
     let json: Value = response.json().await?;
 
     if json["errors"].as_bool().unwrap_or(false) {
@@ -220,74 +174,6 @@ pub async fn bulkwrite_new(
             topic,
             date_str,
             count as u64,
-        );
-    }
-
-    let duration = now.elapsed();
-    let secs = duration.as_secs_f64();
-
-    let taken = if secs >= 60f64 {
-        format!("{}m", secs / 60f64)
-    } else {
-        format!("{:?}", duration)
-    };
-
-    log::trace!("Indexed {} logs in {}", ok_len, taken);
-
-    elasticsearch_write_success_total(topic, ok_len as u64);
-    elasticsearch_write_success_with_date_total(topic, date_str, ok_len as u64);
-
-    Ok(())
-}
-
-/// Reads messages from pulsar topic and indexes
-/// them into Elasticsearch using the bulk API. An index with explicit mapping
-/// is created for search in other examples.
-// TODO: Concurrent bulk requests
-pub async fn bulkwrite(
-    client: &Elasticsearch, index: &str, buf: &[BufferMapValue],
-    time_key: Option<&str>, debug_log_regexset: Option<&RegexSet>,
-) -> Result<(), Error> {
-    let (topic, date_str) = match split_index_and_date_str(index) {
-        Some(v) => v,
-        None => {
-            log::info!("bad index format: {}", index);
-            return Ok(());
-        }
-    };
-
-    let now = Instant::now();
-    // add publish_time as `@timestamp` to raw log by calling transform
-    let (body, errors) = body_error_split(buf, time_key, debug_log_regexset);
-
-    let ok_len = body.len();
-    log::trace!("serde OK : {}", ok_len);
-
-    for i in errors {
-        log::error!("{}", i);
-    }
-
-    let response =
-        client.bulk(BulkParts::Index(index)).body(body).send().await?;
-
-    let json: Value = response.json().await?;
-
-    if json["errors"].as_bool().unwrap_or(false) {
-        let failed_count = json["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|v| !v["error"].is_null())
-            .count();
-
-        // TODO: retry failures
-        log::info!("error : {:?}", json);
-        log::info!("Errors whilst indexing. Failures: {}", failed_count);
-        elasticsearch_write_failed_total(topic, failed_count as u64);
-        elasticsearch_write_failed_with_date_total(
-            topic,
-            date_str,
-            failed_count as u64,
         );
     }
 
@@ -430,6 +316,7 @@ pub async fn sink_elasticsearch_loop(
     }
 }
 
+/// Build BufferMap struct from raw log
 fn build_buffer_map(
     buffer_map: &mut BufferMap, payload: &ChannelPayload,
     rules_set: Option<&RegexSet>,
@@ -463,6 +350,11 @@ fn build_buffer_map(
 
         // use app key in log, otherwise use default value
         let app = get_app_in_json(&log).unwrap_or("__DEFAULT_APP__");
+
+        // record field_count metric
+        let field_count = get_key_len(&log);
+        elasticsearch_index_field_count(&index, app, field_count as u64);
+
         let map = buffer_map.entry(app.into()).or_insert_with(HashMap::new);
         let buf = map.entry(index).or_insert_with(Vec::new);
         buf.push(BulkOperation::index(log).into());

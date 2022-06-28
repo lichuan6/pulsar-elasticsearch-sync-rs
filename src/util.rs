@@ -147,6 +147,14 @@ pub fn is_debug_log(raw_log: &str, regexset: Option<&RegexSet>) -> bool {
     false
 }
 
+/// Return key len of serde_json::Value when type is serde_json::Value::Object
+pub fn get_key_len(v: &serde_json::Value) -> usize {
+    match v {
+        serde_json::Value::Object(map) => map.keys().len(),
+        _ => 0,
+    }
+}
+
 /// Check if json log contains debug level log, checking if level key exists and value equels to `debug`
 pub fn is_debug_log_in_json(v: &serde_json::Value) -> bool {
     match v.get("level") {

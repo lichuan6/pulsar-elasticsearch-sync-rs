@@ -1,12 +1,13 @@
 # 1: Build the exe
-FROM rust:1.60 as builder
+# FROM rust:1.60 as builder
+FROM rust as builder
 ENV PKG_CONFIG_ALLOW_CROSS=1
 WORKDIR /usr/src
 
 # 1a: Prepare for static linking
 RUN apt-get update && \
     apt-get dist-upgrade -y && \
-    apt-get install -y pkg-config libssl-dev
+    apt-get install -y pkg-config libssl-dev libprotobuf-dev protobuf-compiler
     #  musl-tools && \
     # rustup target add x86_64-unknown-linux-musl
 

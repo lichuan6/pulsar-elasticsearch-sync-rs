@@ -1,5 +1,5 @@
 use lazy_static::lazy_static;
-use prometheus::{Encoder, IntCounterVec, Opts, Registry};
+use prometheus::{Encoder, GaugeVec, IntCounterVec, Opts, Registry};
 use std::convert::Infallible;
 use warp::Filter;
 
@@ -69,6 +69,14 @@ lazy_static! {
             &["topic", "date"]
         )
         .expect("metric can be created");
+    pub static ref ELASTICSEARCH_INDEX_FIELD_COUNT: GaugeVec = GaugeVec::new(
+        Opts::new(
+            "elasticsearch_index_field_count",
+            "elasticsearch field count for index"
+        ),
+        &["index", "app"]
+    )
+    .expect("metric can be created");
 }
 
 pub fn pulsar_received_messages_inc_by(topic: &str, v: u64) {
@@ -111,6 +119,12 @@ pub fn elasticsearch_write_failed_with_date_total(
         .inc_by(v);
 }
 
+pub fn elasticsearch_index_field_count(index: &str, key: &str, v: u64) {
+    ELASTICSEARCH_INDEX_FIELD_COUNT
+        .with_label_values(&[index, key])
+        .set(v as f64);
+}
+
 /// With the metrics defined(above), the next step is to register them with the
 /// REGISTRY
 pub fn register_custom_metrics() {
@@ -134,6 +148,9 @@ pub fn register_custom_metrics() {
         .expect("collector can be registered");
     REGISTRY
         .register(Box::new(ELASTICSEARCH_WRITE_FAILED_WITH_DATE_TOTAL.clone()))
+        .expect("collector can be registered");
+    REGISTRY
+        .register(Box::new(ELASTICSEARCH_INDEX_FIELD_COUNT.clone()))
         .expect("collector can be registered");
 }
 
