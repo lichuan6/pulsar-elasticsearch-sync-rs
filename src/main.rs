@@ -51,6 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let injected_namespaces = opt.injected_namespaces;
     let pulsar_namespace = env_or(PULSAR_NAMESPACE, pulsar_namespace);
     let indices_rewrite_rules = opt.indices_rewrite_rules;
+    let rate_limits = opt.rate_limits;
     let debug_log_regexset =
         create_regexset(opt.debug_log_patterns).unwrap_or(None);
     let consumer_name =
@@ -68,6 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             time_key.as_ref().map(String::as_ref),
             indices_rewrite_rules,
             debug_log_regexset.as_ref(),
+            rate_limits,
         )
         .await;
     });

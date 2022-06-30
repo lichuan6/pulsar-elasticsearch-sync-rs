@@ -1,8 +1,5 @@
-use crate::util::{
-    get_app_in_json, get_key_len, is_debug_log, is_debug_log_in_json,
-};
 use crate::{
-    args::IndicesRewriteRules,
+    args::{IndicesRewriteRules, RateLimits},
     prometheus::{
         elasticsearch_index_field_count, elasticsearch_write_failed_total,
         elasticsearch_write_failed_with_date_total,
@@ -11,8 +8,9 @@ use crate::{
         pulsar_received_debug_messages_inc_by,
     },
     pulsar::ChannelPayload,
+    ratelimiter::RateLimitMap,
+    util::{get_app_in_json, get_key_len, is_debug_log, is_debug_log_in_json},
 };
-
 use chrono::{DateTime, NaiveDateTime, Utc};
 use elasticsearch::{
     http::transport::{SingleNodeConnectionPool, TransportBuilder},
@@ -21,10 +19,8 @@ use elasticsearch::{
 use lazy_static::lazy_static;
 use regex::{Regex, RegexSet};
 use serde_json::{json, Value};
-use std::time::Instant;
-use std::{collections::HashMap, time::Duration};
-use tokio::sync::mpsc::Receiver;
-use tokio::time;
+use std::{collections::HashMap, time::Duration, time::Instant};
+use tokio::{sync::mpsc::Receiver, time};
 use url::Url;
 
 lazy_static! {
@@ -278,7 +274,7 @@ pub async fn sink_elasticsearch_loop(
     client: &elasticsearch::Elasticsearch, rx: &mut Receiver<ChannelPayload>,
     buffer_size: usize, flush_interval: u32, time_key: Option<&str>,
     indices_rewrite_rules: Option<IndicesRewriteRules>,
-    debug_log_regexset: Option<&RegexSet>,
+    debug_log_regexset: Option<&RegexSet>, rate_limits: Option<RateLimits>,
 ) {
     let mut total = 0;
 
@@ -292,12 +288,15 @@ pub async fn sink_elasticsearch_loop(
     let mut interval =
         time::interval(Duration::from_millis(flush_interval as u64));
 
+    // init rate limiter based on config
+    let rate_limiter = RateLimitMap::from_config(rate_limits);
+
     loop {
         tokio::select! {
             Some(payload) = rx.recv() => {
                 total += 1;
 
-                build_buffer_map(&mut buffer_map, &payload, rules_set.as_ref(), &rules_mapping, time_key, debug_log_regexset);
+                build_buffer_map(&mut buffer_map, &payload, rules_set.as_ref(), &rules_mapping, time_key, debug_log_regexset, &rate_limiter);
 
                 // every buffer_size number of logs, sink to elasticsearch
                 if total % buffer_size == 0 {
@@ -321,7 +320,7 @@ fn build_buffer_map(
     buffer_map: &mut BufferMap, payload: &ChannelPayload,
     rules_set: Option<&RegexSet>,
     rules_mapping: &Option<Vec<(String, String)>>, time_key: Option<&str>,
-    debug_log_regexset: Option<&RegexSet>,
+    debug_log_regexset: Option<&RegexSet>, rate_limiter: &Option<RateLimitMap>,
 ) {
     let ChannelPayload {
         ref topic,
@@ -356,8 +355,22 @@ fn build_buffer_map(
         elasticsearch_index_field_count(&index, app, field_count as u64);
 
         let map = buffer_map.entry(app.into()).or_insert_with(HashMap::new);
-        let buf = map.entry(index).or_insert_with(Vec::new);
-        buf.push(BulkOperation::index(log).into());
+
+        // load rate limit config and apply rate limit logic
+        if let Some(rate_limiter) = rate_limiter {
+            match rate_limiter.check_key(app) {
+                Ok(_) => {
+                    let buf = map.entry(index).or_insert_with(Vec::new);
+                    buf.push(BulkOperation::index(log).into());
+                }
+                Err(err) => {
+                    log::debug!("rate limit triggered, error: {err}");
+                }
+            }
+        } else {
+            let buf = map.entry(index).or_insert_with(Vec::new);
+            buf.push(BulkOperation::index(log).into());
+        }
     } else {
         log::debug!("deserialize log error: {data}");
         errors.push(data);

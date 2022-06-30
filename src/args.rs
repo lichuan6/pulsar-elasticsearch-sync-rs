@@ -36,6 +36,24 @@ impl FromStr for IndicesRewriteRules {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RateLimits {
+    /// rules for rate limit, key is the app name, value is the rate limit(in seconds)
+    /// pattern. i.e ("app-titan", 1000") has rate limit of 1000/s write to es
+    pub rate_limits: RateLimit,
+}
+
+pub type RateLimit = HashMap<String, u32>;
+
+impl FromStr for RateLimits {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str::<Self>(s).map_err(|e| {
+            format!("parse into RateLimits error: {}, input: {}", e, s)
+        })
+    }
+}
+
 /// A pulsar messages to elasticsearch sync program
 #[derive(StructOpt, Debug)]
 #[structopt(name = "pulsar-elasticsearch-sync-rs")]
@@ -115,6 +133,10 @@ pub struct Opt {
     /// indices rewrite rule for elasticsearch indices
     #[structopt(long)]
     pub indices_rewrite_rules: Option<IndicesRewriteRules>,
+
+    /// rate limit config
+    #[structopt(long)]
+    pub rate_limits: Option<RateLimits>,
 
     /// inject key to message, value is uuid string
     #[structopt(long)]
