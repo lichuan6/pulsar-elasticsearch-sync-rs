@@ -356,8 +356,13 @@ fn build_buffer_map(
         elasticsearch_index_field_count(&index, app, field_count as u64);
 
         let map = buffer_map.entry(app.into()).or_insert_with(HashMap::new);
+
+        // load rate limit config and push
         let buf = map.entry(index).or_insert_with(Vec::new);
-        buf.push(BulkOperation::index(log).into());
+        // hard code rate limt
+        if buf.len() < 5000 {
+            buf.push(BulkOperation::index(log).into());
+        }
     } else {
         log::debug!("deserialize log error: {data}");
         errors.push(data);
