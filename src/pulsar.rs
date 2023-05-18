@@ -224,7 +224,12 @@ pub async fn consume_loop(
         tokio::select! {
             Ok(msg) = consumer.try_next() => {
                 if let Some(msg) = msg {
-                    consumer.ack(&msg).await?;
+                    match consumer.ack(&msg).await {
+                        Ok(_) => (),
+                        Err(e) => {
+                            log::error!("consumer ack error: {:?}", e)
+                        },
+                    }
                     let data = match msg.deserialize() {
                         Ok(data) => data,
                         Err(e) => {
