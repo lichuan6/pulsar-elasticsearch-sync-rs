@@ -397,6 +397,7 @@ fn test_get_rewrite_index() {
     // {"rules": {"app-.*":"app", "etcd.*": "eks-logstash", "istio-system.*": "eks-logstash", "kube-system.*": "eks-logstash", "kong.*": "eks-logstash"}}
     let rules = vec![
         ("app-biz.*", "app"),
+        ("app-mutants.*", "mutants"),
         ("app-biz1.*", "app"),
         ("app-.*", "app"),
         ("etcd.*", "eks-logstash"),
@@ -411,6 +412,7 @@ fn test_get_rewrite_index() {
 
     let topics = vec![
         ("app-biz", "app"),
+        ("app-mutants", "mutants"),
         ("app-biz1", "app"),
         ("app-biz2", "app"),
         ("app-foo", "app"),

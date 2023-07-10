@@ -25,7 +25,7 @@ pub struct IndicesRewriteRules {
     pub rules: IndicesRewriteRule,
 }
 
-pub type IndicesRewriteRule = HashMap<String, String>;
+pub type IndicesRewriteRule = Vec<(String, String)>;
 
 impl FromStr for IndicesRewriteRules {
     type Err = String;
