@@ -31,7 +31,8 @@ RUN cargo install --path .
 # FROM alpine:latest
 # FROM gcr.io/distroless/cc-debian10
 # FROM gcr.io/distroless/cc-debian10:debug
-FROM debian:bullseye
+# FROM debian:bullseye
+FROM gcr.io/distroless/cc-debian11:debug
 COPY --from=builder /usr/local/cargo/bin/pulsar-elasticsearch-sync-rs /pulsar-elasticsearch-sync-rs
 #COPY static .
 # USER 1000
